@@ -1,7 +1,6 @@
 # Barber Shop Voice Booking API
 
-![CI](https://github.com/YOUR-USERNAME/voice-booking/actions/workflows/ci.yml/badge.svg)
-<!-- Replace YOUR-USERNAME above with your GitHub username after pushing. -->
+[![CI](https://github.com/Marinst9/voice-booking/actions/workflows/ci.yml/badge.svg)](https://github.com/Marinst9/voice-booking/actions/workflows/ci.yml)
 
 The backend for an AI voice booking assistant for a barber shop. A voice agent calls these endpoints as
 "tools" to check free times, book and cancel appointments. Every answer includes a sentence the agent
