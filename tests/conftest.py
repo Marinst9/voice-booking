@@ -26,6 +26,7 @@ from app.call_service import CallService
 from app.calls import CallStore, InMemoryCallStore
 from app.config import TIMEZONE, Settings, get_settings
 from app.main import app, get_booking_service, get_call_service
+from app.rate_limit import RateLimiters
 
 FAKE_NOW = datetime(2026, 11, 22, 12, 0, tzinfo=TIMEZONE)  # a Sunday
 TEST_API_KEY = "test-api-key-0123456789"
@@ -133,5 +134,6 @@ def client(booking_service, call_service, test_settings):
     app.dependency_overrides[get_booking_service] = lambda: booking_service
     app.dependency_overrides[get_call_service] = lambda: call_service
     app.dependency_overrides[get_settings] = lambda: test_settings
+    app.state.rate_limiters = RateLimiters()  # fresh counters, so one test's requests never limit another's
     yield TestClient(app, headers={"X-API-Key": TEST_API_KEY})
     app.dependency_overrides.clear()

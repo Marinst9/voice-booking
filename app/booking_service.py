@@ -334,3 +334,7 @@ class BookingService:
 
     def get_booking(self, booking_id: str) -> Booking | None:
         return self.calendar.get_booking(booking_id)
+
+    def check_health(self) -> None:
+        """Raises if the calendar storage can't be reached."""
+        self.calendar.check_health()

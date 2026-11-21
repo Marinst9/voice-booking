@@ -49,8 +49,8 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
-      # /docs needs no API key, so it's a simple "is the server answering?" check.
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs')"]
+      # /health needs no API key, and answers 503 (= unhealthy) if the database is unreachable.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
       timeout: 3s
       retries: 5

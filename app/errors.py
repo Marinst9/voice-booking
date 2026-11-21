@@ -28,6 +28,7 @@ class AppError(Exception):
         message: str,
         status_code: int = 400,
         suggested_times: list[str] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -35,3 +36,5 @@ class AppError(Exception):
         self.status_code = status_code
         # Alternative start times (e.g. ["13:30", "14:30"]) so the agent can offer them directly.
         self.suggested_times = suggested_times or []
+        # Extra HTTP response headers, e.g. Retry-After on 429 Too Many Requests.
+        self.headers = headers or {}

@@ -12,6 +12,7 @@ They are hidden from /docs (include_in_schema=False) because they return HTML, n
 """
 
 import logging
+import math
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from app.config import TIMEZONE, Settings, get_settings
 from app.dependencies import get_booking_service, get_call_service
 from app.errors import AppError
 from app.logging_config import log_event
+from app.rate_limit import RateLimiters, client_ip, get_rate_limiters
 
 logger = logging.getLogger("app.admin")
 
@@ -98,19 +100,39 @@ def login(
     next: str = Form("/admin"),
     csrf: str | None = Form(None),
     settings: Settings = Depends(get_settings),
+    limiters: RateLimiters = Depends(get_rate_limiters),
 ) -> Response:
     check_csrf(request, csrf)
-    if not check_credentials(username, password, settings):
-        log_event(logger, logging.WARNING, "admin_login_failed", username=username[:50])
+
+    def login_error(status_code: int, message: str) -> HTMLResponse:
         return render(
             request,
             "login.html",
-            status_code=401,
+            status_code=status_code,
             next=safe_next_path(next),
             login_enabled=settings.admin_password is not None,
-            error="Wrong username or password.",
+            error=message,
             username=username,
         )
+
+    # Too many wrong passwords from this IP recently: don't even check this one.
+    # (Checking it would let an attacker keep guessing, just more slowly.)
+    ip = client_ip(request, settings)
+    window = settings.login_lockout_minutes * 60
+    wait = limiters.login_failures.retry_after(ip, settings.login_max_failures, window)
+    if wait is not None:
+        minutes = max(math.ceil(wait / 60), 1)
+        log_event(logger, logging.WARNING, "admin_login_locked", client_ip=ip)
+        response = login_error(429, f"Too many failed logins. Try again in {minutes} minute{'s' * (minutes != 1)}.")
+        response.headers["Retry-After"] = str(math.ceil(wait))
+        return response
+
+    if not check_credentials(username, password, settings):
+        limiters.login_failures.hit(ip, settings.login_max_failures, window)
+        log_event(logger, logging.WARNING, "admin_login_failed", username=username[:50], client_ip=ip)
+        return login_error(401, "Wrong username or password.")
+
+    limiters.login_failures.reset(ip)  # a correct login clears the failures
     log_in(request, settings.admin_username)
     return redirect(safe_next_path(next))
 

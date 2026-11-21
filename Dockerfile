@@ -22,5 +22,9 @@ RUN useradd --create-home --uid 1000 appuser
 USER appuser
 
 EXPOSE 8000
+# PORT: hosting platforms like Railway tell the app which port to listen on; locally it's 8000.
+# `exec` makes uvicorn the main process, so it receives the platform's stop signal and shuts down cleanly.
 # --no-access-log: our own middleware already logs every request (as JSON).
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+# Migrations are NOT run here: Docker Compose runs them in the `migrate` service, Railway in its
+# pre-deploy command (see README "Deploying to Railway").
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

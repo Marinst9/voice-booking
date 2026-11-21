@@ -115,6 +115,13 @@ UNAUTHORIZED = _response(
     ),
 )
 
+RATE_LIMITED = _response(
+    "Too many requests from this client (RATE_LIMIT_API_PER_MINUTE). Wait for the seconds in Retry-After.",
+    rate_limited=_error(
+        "Too many requests", "rate_limited", "Too many requests. Please wait 12 seconds and try again."
+    ),
+)
+
 EXAMPLE_BOOKING = {
     "id": "3e9aee92",
     "customer_name": "Marko",
@@ -148,6 +155,7 @@ CHECK_AVAILABILITY_RESPONSES: dict[int | str, dict[str, Any]] = {
         unknown_service=UNKNOWN_SERVICE,
     ),
     401: UNAUTHORIZED,
+    429: RATE_LIMITED,
     422: INVALID_INPUT,
 }
 
@@ -175,6 +183,7 @@ CREATE_BOOKING_RESPONSES: dict[int | str, dict[str, Any]] = {
         time_taken=TIME_TAKEN,
     ),
     401: UNAUTHORIZED,
+    429: RATE_LIMITED,
     422: INVALID_INPUT,
 }
 
@@ -189,6 +198,7 @@ CANCEL_BOOKING_RESPONSES: dict[int | str, dict[str, Any]] = {
     ),
     404: _response("No booking matches that phone number and start time.", booking_not_found=BOOKING_NOT_FOUND),
     401: UNAUTHORIZED,
+    429: RATE_LIMITED,
     422: INVALID_INPUT,
 }
 
@@ -202,5 +212,6 @@ LIST_BOOKINGS_RESPONSES: dict[int | str, dict[str, Any]] = {
         },
     ),
     401: UNAUTHORIZED,
+    429: RATE_LIMITED,
     422: INVALID_INPUT,  # e.g. ?include_cancelled=maybe
 }

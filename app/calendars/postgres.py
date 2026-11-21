@@ -13,7 +13,7 @@ the same millisecond can't both succeed; the second gets SlotTakenError.
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Engine, String, func, select
+from sqlalchemy import CheckConstraint, DateTime, Engine, String, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 
@@ -138,6 +138,10 @@ class PostgresCalendar(CalendarBackend):
                 raise KeyError(booking_id)
             row.status = BookingStatus.CANCELLED.value
         return _to_booking(row)
+
+    def check_health(self) -> None:
+        with self.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
 
     def close(self) -> None:
         self.engine.dispose()

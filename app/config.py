@@ -52,11 +52,29 @@ class Settings(BaseSettings):
     slot_step_minutes: int = Field(30, gt=0)  # 30 -> offer 09:00, 09:30, 10:00, ...
     services: list[Service] = DEFAULT_SERVICES  # override with JSON in the SERVICES variable
 
+    # ----- Where the app runs -----
+    # "production" switches on the safe defaults (see the checks below and README "Production settings").
+    environment: Literal["development", "production"] = "development"
+    # The interactive docs at /docs, /redoc and /openapi.json. Empty = on in development, off in production.
+    docs_enabled: bool | None = None
+
     # ----- Storage -----
     # "memory" = fake calendar (lost on restart), "postgres" = real database.
     calendar_backend: Literal["memory", "postgres"] = "memory"
     # e.g. postgresql+psycopg://booking:booking@127.0.0.1:5432/booking
+    # Hosting platforms give "postgresql://..." or "postgres://..."; both are accepted (see below).
     database_url: str | None = None
+
+    # ----- Rate limiting (per client IP; 0 = no limit) -----
+    rate_limit_api_per_minute: int = Field(60, ge=0)  # REST endpoints
+    rate_limit_vapi_per_minute: int = Field(300, ge=0)  # /vapi/... (all of Vapi's calls come from few IPs)
+    login_max_failures: int = Field(5, ge=0)  # wrong admin logins allowed per window...
+    login_lockout_minutes: int = Field(15, gt=0)  # ...before that IP has to wait this long
+    # Behind a hosting platform's proxy, every request seems to come from the proxy. This names the
+    # header in which the proxy passes the real client IP (Railway: X-Real-IP). Empty = use the
+    # connection's address (right for local runs and Docker Compose). Only set it when a proxy you
+    # trust always sets this header, otherwise clients could fake their IP to dodge the limits.
+    client_ip_header: str | None = None
 
     # ----- Logging -----
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -77,8 +95,9 @@ class Settings(BaseSettings):
     # Signs the login cookie so nobody can forge one. Without it, a random one is made at every start
     # (works, but everyone is logged out when the server restarts).
     session_secret: SecretStr | None = Field(None, min_length=32)
-    # True = the browser only sends the login cookie over HTTPS. Turn on when the site is served over HTTPS.
-    session_cookie_secure: bool = False
+    # True = the browser only sends the login cookie over HTTPS.
+    # Empty = off in development (plain http://127.0.0.1), on in production (which must be HTTPS).
+    session_cookie_secure: bool | None = None
     session_max_age_hours: int = Field(8, gt=0)  # log in again after this long
 
     # ----- Checks: fail at startup with a clear message instead of misbehaving later -----
@@ -113,7 +132,48 @@ class Settings(BaseSettings):
             raise ValueError("CALENDAR_BACKEND=postgres needs DATABASE_URL")
         return self
 
+    @field_validator("database_url")
+    @classmethod
+    def _use_psycopg_driver(cls, value: str | None) -> str | None:
+        """'postgresql://...' or 'postgres://...' (as Railway, Render, Heroku write it) -> 'postgresql+psycopg://...'"""
+        if value is None:
+            return None
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value.removeprefix(prefix)
+        return value
+
+    @model_validator(mode="after")
+    def _safe_production(self) -> "Settings":
+        """In production, refuse to start with a setting that would lose data or weaken security."""
+        if self.environment != "production":
+            return self
+        problems = []
+        if self.api_key is None:
+            problems.append("API_KEY must be set")
+        if self.calendar_backend != "postgres":
+            problems.append("CALENDAR_BACKEND must be postgres (the memory calendar loses everything on restart)")
+        if self.admin_password is not None and self.session_secret is None:
+            problems.append("SESSION_SECRET must be set when ADMIN_PASSWORD is set")
+        if self.session_cookie_secure is False:
+            problems.append("SESSION_COOKIE_SECURE can't be false (production runs on HTTPS)")
+        if problems:
+            raise ValueError("ENVIRONMENT=production, but: " + "; ".join(problems))
+        return self
+
     # ----- Handy derived values -----
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+    @property
+    def show_docs(self) -> bool:
+        return self.docs_enabled if self.docs_enabled is not None else not self.is_production
+
+    @property
+    def secure_cookies(self) -> bool:
+        return self.session_cookie_secure if self.session_cookie_secure is not None else self.is_production
 
     @property
     def timezone(self) -> ZoneInfo:

@@ -73,5 +73,8 @@ class CalendarBackend(ABC):
     def cancel_booking(self, booking_id: str) -> Booking:
         """Mark a booking as cancelled (it is kept for history) and return it."""
 
+    def check_health(self) -> None:  # noqa: B027  (optional hook)
+        """Raise an exception if the storage can't be reached. Used by GET /health."""
+
     def close(self) -> None:  # noqa: B027  (optional hook, most calendars need nothing)
         """Release resources such as database connections when the app shuts down."""

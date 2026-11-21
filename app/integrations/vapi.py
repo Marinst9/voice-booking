@@ -65,6 +65,7 @@ from app.models import (
     CreateBookingRequest,
     ErrorResponse,
 )
+from app.rate_limit import limit_vapi
 from app.security import require_vapi_secret
 
 logger = logging.getLogger("app.vapi")
@@ -374,7 +375,8 @@ def save_end_of_call_report(calls: CallService, message: VapiMessage) -> None:
 
 # ======================= The endpoints =======================
 
-router = APIRouter(prefix="/vapi", tags=["Vapi"], dependencies=[Depends(require_vapi_secret)])
+# The rate limit comes first, so even requests with a wrong secret are limited.
+router = APIRouter(prefix="/vapi", tags=["Vapi"], dependencies=[Depends(limit_vapi), Depends(require_vapi_secret)])
 
 EXAMPLE_REQUEST = {
     "message": {
@@ -440,6 +442,7 @@ ROUTE_DOCS: dict[str, Any] = {
             },
         },
         401: {"model": ErrorResponse, "description": "Missing or wrong Vapi credential (VAPI_SECRET)."},
+        429: {"model": ErrorResponse, "description": "Too many requests (RATE_LIMIT_VAPI_PER_MINUTE)."},
     },
 }
 
