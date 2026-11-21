@@ -6,6 +6,7 @@ The last group is PostgreSQL-only and proves the database itself blocks double b
 """
 
 import threading
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -72,6 +73,24 @@ def test_find_booking_ignores_cancelled(calendar):
     assert calendar.find_booking("070123456", booking.start).id == "b1"
     calendar.cancel_booking("b1")
     assert calendar.find_booking("070123456", booking.start) is None
+
+
+def test_get_booking_by_id(calendar):
+    calendar.add_booking(make_booking(14))
+    calendar.cancel_booking("b1")
+    assert calendar.get_booking("b1").status == BookingStatus.CANCELLED  # cancelled ones are found too
+    assert calendar.get_booking("nope") is None
+
+
+def test_bookings_for_call(calendar):
+    calendar.add_booking(replace(make_booking(10, booking_id="first"), call_id="call-1"))
+    calendar.add_booking(replace(make_booking(12, booking_id="second"), call_id="call-1"))
+    calendar.add_booking(make_booking(15, booking_id="rest-api"))  # no call id
+    calendar.cancel_booking("first")
+
+    assert [b.id for b in calendar.bookings_for_call("call-1")] == ["first", "second"]  # oldest first
+    assert calendar.bookings_for_call("call-1")[1].call_id == "call-1"
+    assert calendar.bookings_for_call("other-call") == []
 
 
 def test_list_window(calendar):

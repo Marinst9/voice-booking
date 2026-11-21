@@ -13,19 +13,16 @@ the same millisecond can't both succeed; the second gets SlotTakenError.
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Engine, String, create_engine, func, select
+from sqlalchemy import CheckConstraint, DateTime, Engine, String, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 
 from app.calendars.base import Booking, BookingStatus, CalendarBackend, SlotTakenError
 from app.config import TIMEZONE
+from app.database import Base, make_engine
 
 # PostgreSQL's error code for "exclusion constraint violated".
 EXCLUSION_VIOLATION = "23P01"
-
-
-class Base(DeclarativeBase):
-    """All database tables inherit from this. Alembic reads it to know our tables."""
 
 
 class BookingRow(Base):
@@ -47,6 +44,8 @@ class BookingRow(Base):
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), server_default=BookingStatus.CONFIRMED.value)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The Vapi call that made this booking (None for bookings made through the REST API).
+    call_id: Mapped[str | None] = mapped_column(String(64), index=True)
 
 
 def _to_booking(row: BookingRow) -> Booking:
@@ -61,6 +60,7 @@ def _to_booking(row: BookingRow) -> Booking:
         end=row.end_time.astimezone(TIMEZONE),
         status=BookingStatus(row.status),
         created_at=row.created_at.astimezone(TIMEZONE),
+        call_id=row.call_id,
     )
 
 
@@ -69,8 +69,7 @@ class PostgresCalendar(CalendarBackend):
         if engine is None:
             if not database_url:
                 raise ValueError("PostgresCalendar needs a database_url or an engine")
-            # pool_pre_ping: check a pooled connection still works before using it.
-            engine = create_engine(database_url, pool_pre_ping=True)
+            engine = make_engine(database_url)
         self.engine = engine
         self._session = sessionmaker(engine, expire_on_commit=False)
 
@@ -100,6 +99,7 @@ class PostgresCalendar(CalendarBackend):
             start_time=booking.start,
             end_time=booking.end,
             status=BookingStatus.CONFIRMED.value,
+            call_id=booking.call_id,
         )
         try:
             # `begin()` commits at the end of the block, or rolls back on an error.
@@ -120,6 +120,16 @@ class PostgresCalendar(CalendarBackend):
         with self._session() as session:
             row = session.scalars(query).first()
             return _to_booking(row) if row else None
+
+    def get_booking(self, booking_id: str) -> Booking | None:
+        with self._session() as session:
+            row = session.get(BookingRow, booking_id)
+            return _to_booking(row) if row else None
+
+    def bookings_for_call(self, call_id: str) -> list[Booking]:
+        query = select(BookingRow).where(BookingRow.call_id == call_id).order_by(BookingRow.created_at)
+        with self._session() as session:
+            return [_to_booking(row) for row in session.scalars(query)]
 
     def cancel_booking(self, booking_id: str) -> Booking:
         with self._session.begin() as session:

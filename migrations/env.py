@@ -11,8 +11,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine
 
-from app.calendars.postgres import Base
+import app.calendars.postgres  # noqa: F401  (registers the bookings table on Base)
+import app.calls.postgres  # noqa: F401  (registers the calls table on Base)
 from app.config import Settings
+from app.database import Base
 
 config = context.config
 

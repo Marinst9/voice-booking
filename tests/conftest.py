@@ -1,7 +1,7 @@
 """
 Shared test setup. pytest loads this file automatically before the tests.
 
-- Every test gets a brand-new empty calendar and a fake "now" of
+- Every test gets a brand-new empty calendar and call history, and a fake "now" of
   Sunday 22 November 2026, 12:00 (Skopje), so results never depend on the real date.
 - Tests that use a calendar run TWICE: once with the in-memory calendar and once
   with PostgreSQL (shown as test_name[memory] and test_name[postgres]).
@@ -22,8 +22,10 @@ from sqlalchemy import create_engine, text
 
 from app.booking_service import BookingService
 from app.calendars import CalendarBackend, InMemoryCalendar
+from app.call_service import CallService
+from app.calls import CallStore, InMemoryCallStore
 from app.config import TIMEZONE, Settings, get_settings
-from app.main import app, get_booking_service
+from app.main import app, get_booking_service, get_call_service
 
 FAKE_NOW = datetime(2026, 11, 22, 12, 0, tzinfo=TIMEZONE)  # a Sunday
 TEST_API_KEY = "test-api-key-0123456789"
@@ -57,22 +59,53 @@ def postgres_engine():
 
 
 @pytest.fixture
-def postgres_calendar(postgres_engine):
+def clean_postgres(postgres_engine):
+    """Empty tables for every test."""
+    with postgres_engine.begin() as connection:
+        connection.execute(text("TRUNCATE bookings, calls"))
+    return postgres_engine
+
+
+@pytest.fixture
+def postgres_calendar(clean_postgres):
     from app.calendars.postgres import PostgresCalendar
 
-    with postgres_engine.begin() as connection:
-        connection.execute(text("TRUNCATE bookings"))  # empty table for every test
-    return PostgresCalendar(engine=postgres_engine)
+    return PostgresCalendar(engine=clean_postgres)
 
 
-# ---------- Calendar, service and API client ----------
+@pytest.fixture
+def postgres_call_store(clean_postgres):
+    from app.calls.postgres import PostgresCallStore
+
+    return PostgresCallStore(engine=clean_postgres)
+
+
+# ---------- Storage, services and API client ----------
 
 
 @pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.postgres)])
-def calendar(request) -> CalendarBackend:
-    if request.param == "postgres":
+def backend(request) -> str:
+    """Which storage this test run uses. The calendar and the call store always use the same one."""
+    return request.param
+
+
+@pytest.fixture
+def calendar(backend, request) -> CalendarBackend:
+    if backend == "postgres":
         return request.getfixturevalue("postgres_calendar")
     return InMemoryCalendar()
+
+
+@pytest.fixture
+def call_store(backend, request) -> CallStore:
+    if backend == "postgres":
+        return request.getfixturevalue("postgres_call_store")
+    return InMemoryCallStore()
+
+
+@pytest.fixture
+def call_service(call_store, calendar) -> CallService:
+    return CallService(call_store, calendar)
 
 
 @pytest.fixture
@@ -87,9 +120,10 @@ def booking_service(calendar) -> BookingService:
 
 
 @pytest.fixture
-def client(booking_service, test_settings):
-    """A test client that sends the right API key and uses the fresh `booking_service` above."""
+def client(booking_service, call_service, test_settings):
+    """A test client that sends the right API key and uses the fresh services above."""
     app.dependency_overrides[get_booking_service] = lambda: booking_service
+    app.dependency_overrides[get_call_service] = lambda: call_service
     app.dependency_overrides[get_settings] = lambda: test_settings
     yield TestClient(app, headers={"X-API-Key": TEST_API_KEY})
     app.dependency_overrides.clear()

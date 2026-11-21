@@ -51,6 +51,13 @@ class InMemoryCalendar(CalendarBackend):
                 return booking
         return None
 
+    def get_booking(self, booking_id: str) -> Booking | None:
+        return next((b for b in self._bookings if b.id == booking_id), None)
+
+    def bookings_for_call(self, call_id: str) -> list[Booking]:
+        # The list is in the order bookings were added, so it's already oldest first.
+        return [b for b in self._bookings if b.call_id == call_id]
+
     def cancel_booking(self, booking_id: str) -> Booking:
         for index, booking in enumerate(self._bookings):
             if booking.id == booking_id:

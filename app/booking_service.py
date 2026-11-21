@@ -209,7 +209,14 @@ class BookingService:
             "message": message,
         }
 
-    def create_booking(self, customer_name: str, phone: str, service_text: str, start: datetime) -> Booking:
+    def create_booking(
+        self,
+        customer_name: str,
+        phone: str,
+        service_text: str,
+        start: datetime,
+        call_id: str | None = None,  # set by the Vapi adapter, so the call history can show the booking
+    ) -> Booking:
         service = self.get_service(service_text)
         start = to_shop_time(start)
         end = start + timedelta(minutes=service.duration_minutes)
@@ -255,6 +262,7 @@ class BookingService:
                 service_name=service.name,
                 start=start,
                 end=end,
+                call_id=call_id,
             )
             try:
                 booking = self.calendar.add_booking(new_booking)
@@ -292,6 +300,20 @@ class BookingService:
                     status_code=404,
                 )
             booking = self.calendar.cancel_booking(found.id)
+        self._log_cancelled(booking, cancelled_by="caller")
+        return booking
+
+    def cancel_booking_by_id(self, booking_id: str) -> Booking:
+        """Used by the admin dashboard's Cancel button. Cancelling twice is harmless."""
+        with self._lock:
+            found = self.calendar.get_booking(booking_id)
+            if found is None:
+                raise BookingError("booking_not_found", "That booking doesn't exist.", status_code=404)
+            booking = self.calendar.cancel_booking(found.id)
+        self._log_cancelled(booking, cancelled_by="admin")
+        return booking
+
+    def _log_cancelled(self, booking: Booking, cancelled_by: str) -> None:
         log_event(
             logger,
             logging.INFO,
@@ -300,8 +322,12 @@ class BookingService:
             service=booking.service_key,
             start=booking.start.isoformat(),
             phone=mask_phone(booking.phone),
+            cancelled_by=cancelled_by,
         )
-        return booking
 
     def all_bookings(self, include_cancelled: bool = False) -> list[Booking]:
         return self.calendar.list_bookings(include_cancelled=include_cancelled)
+
+    def bookings_between(self, start: datetime, end: datetime) -> list[Booking]:
+        """Confirmed bookings that overlap [start, end), sorted by start time."""
+        return self.calendar.list_bookings(start, end)

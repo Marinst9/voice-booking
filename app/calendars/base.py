@@ -29,6 +29,7 @@ class Booking:
     end: datetime
     status: BookingStatus = BookingStatus.CONFIRMED
     created_at: datetime | None = None  # filled in by the calendar when saved
+    call_id: str | None = None  # the Vapi call that made it (None = made through the REST API)
 
 
 class SlotTakenError(Exception):
@@ -59,6 +60,14 @@ class CalendarBackend(ABC):
     @abstractmethod
     def find_booking(self, phone: str, start: datetime) -> Booking | None:
         """The confirmed booking with this (normalized) phone and start time, or None."""
+
+    @abstractmethod
+    def get_booking(self, booking_id: str) -> Booking | None:
+        """The booking with this id (confirmed or cancelled), or None."""
+
+    @abstractmethod
+    def bookings_for_call(self, call_id: str) -> list[Booking]:
+        """Every booking (also cancelled ones) made during this Vapi call, oldest first."""
 
     @abstractmethod
     def cancel_booking(self, booking_id: str) -> Booking:

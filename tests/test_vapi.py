@@ -6,11 +6,13 @@ with the fake "now" of Sunday 22 November 2026, 12:00 (Skopje).
 """
 
 import json
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from app.config import SERVICES
+from app.config import SERVICES, TIMEZONE
 from app.integrations.vapi import TOOLS
 from tests.conftest import TEST_API_KEY, TEST_VAPI_SECRET
 
@@ -182,11 +184,148 @@ def test_server_crash_uses_error_field_and_still_returns_200(client, booking_ser
     assert "exploded" not in response.text
 
 
-def test_other_vapi_events_are_acknowledged(client):
+@pytest.mark.parametrize("path", ["/vapi/events", "/vapi/tools"])
+def test_other_vapi_events_are_acknowledged(client, path):
     payload = {"message": {"type": "status-update", "status": "in-progress", "call": {"id": "vapi-call-42"}}}
-    response = client.post("/vapi/tools", json=payload, headers=VAPI_HEADERS)
+    response = client.post(path, json=payload, headers=VAPI_HEADERS)
     assert response.status_code == 200
-    assert response.json() == {"results": []}
+    assert response.json() == {}
+
+
+def test_events_url_also_runs_tool_calls(client):
+    response = client.post("/vapi/events", json=vapi_payload(tool_call("get_current_datetime")), headers=VAPI_HEADERS)
+    assert only_result(response)["result"]["weekday"] == "Sunday"
+
+
+# ---------- End-of-call report ----------
+
+
+def end_of_call_report(call_id: str = "vapi-call-42", **message_fields) -> dict:
+    """An end-of-call-report like Vapi sends it (trimmed: real ones also carry messages, recording, costs...)."""
+    message = {
+        "type": "end-of-call-report",
+        "timestamp": 1795435216000,
+        "endedReason": "customer-ended-call",
+        "startedAt": "2026-11-23T07:58:01.000Z",  # 08:58:01 in Skopje
+        "endedAt": "2026-11-23T08:00:16.000Z",
+        "cost": 0.0634,
+        "costs": [{"type": "transport", "cost": 0.01}],
+        "artifact": {
+            "transcript": "AI: Hello, how can I help?\nUser: I'd like a haircut on Monday at two.\n"
+            "AI: You're booked, Marko!",
+            "messages": [{"role": "bot", "message": "Hello, how can I help?"}],
+            "recording": {"stereoUrl": "https://example.com/recording.wav"},
+        },
+        "analysis": {"summary": "Marko booked a haircut for Monday at 14:00.", "successEvaluation": "true"},
+        "call": {
+            "id": call_id,
+            "type": "inboundPhoneCall",
+            "customer": {"number": "+38970123456"},
+            "startedAt": "2026-11-23T07:58:01.000Z",
+        },
+        "assistant": {"name": "Barber receptionist"},
+    }
+    message.update(message_fields)
+    return {"message": message}
+
+
+def send_report(client, report: dict, path: str = "/vapi/events"):
+    response = client.post(path, json=report, headers=VAPI_HEADERS)
+    assert response.status_code == 200
+    assert response.json() == {}  # Vapi needs no answer to a report
+    return response
+
+
+def test_end_of_call_report_is_saved(client, call_service):
+    send_report(client, end_of_call_report())
+
+    call = call_service.get_call("vapi-call-42")
+    assert call.started_at == datetime(2026, 11, 23, 8, 58, 1, tzinfo=TIMEZONE)
+    assert call.ended_at == datetime(2026, 11, 23, 9, 0, 16, tzinfo=TIMEZONE)
+    assert call.duration_seconds == 135  # 2 min 15 s, calculated from the two times
+    assert call.ended_reason == "customer-ended-call"
+    assert call.transcript.startswith("AI: Hello, how can I help?\nUser: I'd like a haircut")
+    assert call.summary == "Marko booked a haircut for Monday at 14:00."
+    assert call.cost == Decimal("0.0634")
+    assert call.customer_number == "+38970123456"
+    assert call.booking_id is None  # no booking was made in this call
+
+
+def test_report_links_the_booking_made_during_the_call(client, call_service):
+    # During the call: the assistant books (the tool-calls payload carries call.id = "vapi-call-42").
+    booking = only_result(call_tools(client, tool_call("create_booking", BOOKING_ARGS)))["result"]["booking"]
+    # After the call: the report arrives.
+    send_report(client, end_of_call_report("vapi-call-42"))
+    assert call_service.get_call("vapi-call-42").booking_id == booking["id"]
+
+
+def test_booking_from_another_call_is_not_linked(client, call_service):
+    call_tools(client, tool_call("create_booking", BOOKING_ARGS))  # made in call "vapi-call-42"
+    send_report(client, end_of_call_report("a-different-call"))
+    assert call_service.get_call("a-different-call").booking_id is None
+
+
+def test_report_sent_twice_is_stored_once(client, call_service):
+    send_report(client, end_of_call_report(endedReason="customer-ended-call"))
+    send_report(client, end_of_call_report(endedReason="assistant-ended-call"))
+    [call] = call_service.recent_calls()
+    assert call.ended_reason == "assistant-ended-call"
+
+
+def test_report_also_works_on_the_tools_url(client, call_service):
+    send_report(client, end_of_call_report(), path="/vapi/tools")
+    assert call_service.get_call("vapi-call-42") is not None
+
+
+def test_older_report_format_with_fields_at_the_top_or_in_call(client, call_service):
+    report = {
+        "message": {
+            "type": "end-of-call-report",
+            "endedReason": "silence-timed-out",
+            "transcript": "AI: Hello?",
+            "summary": "Nobody answered.",
+            "call": {
+                "id": "old-style",
+                "startedAt": "2026-11-23T08:00:00Z",
+                "endedAt": "2026-11-23T08:00:30Z",
+                "cost": "0.01",
+            },
+        }
+    }
+    send_report(client, report)
+    call = call_service.get_call("old-style")
+    assert call.transcript == "AI: Hello?"
+    assert call.summary == "Nobody answered."
+    assert call.duration_seconds == 30
+    assert call.cost == Decimal("0.0100")
+
+
+def test_duration_seconds_from_vapi_is_used_when_sent(client, call_service):
+    send_report(client, end_of_call_report(durationSeconds=140.4))
+    assert call_service.get_call("vapi-call-42").duration_seconds == 140
+
+
+def test_unreadable_fields_are_left_empty_instead_of_losing_the_call(client, call_service):
+    report = end_of_call_report(startedAt="yesterday", endedAt=None, cost="lots", artifact="not an object")
+    report["message"]["call"].pop("startedAt")
+    send_report(client, report)
+    call = call_service.get_call("vapi-call-42")
+    assert call.started_at is None and call.duration_seconds is None and call.cost is None
+    assert call.transcript is None
+    assert call.summary == "Marko booked a haircut for Monday at 14:00."  # the readable parts are kept
+
+
+def test_report_without_call_id_is_acknowledged_but_not_saved(client, call_service):
+    report = end_of_call_report()
+    del report["message"]["call"]
+    send_report(client, report)
+    assert call_service.recent_calls() == []
+
+
+def test_report_needs_the_vapi_secret(client, call_service):
+    response = client.post("/vapi/events", json=end_of_call_report(), headers={"X-API-Key": ""})
+    assert response.status_code == 401
+    assert call_service.recent_calls() == []
 
 
 # ---------- Security ----------

@@ -24,8 +24,10 @@ from fastapi.responses import JSONResponse
 from app import api_docs
 from app.booking_service import BookingService, booked_message, cancelled_message
 from app.calendars import create_calendar
+from app.call_service import CallService
+from app.calls import create_call_store
 from app.config import get_settings
-from app.dependencies import get_booking_service
+from app.dependencies import get_booking_service, get_call_service
 from app.errors import AppError, invalid_input_message
 from app.integrations import vapi
 from app.logging_config import log_event, request_id_var, setup_logging
@@ -58,8 +60,11 @@ async def lifespan(app: FastAPI):
     # To add Google Calendar later, add it to create_calendar(); nothing here changes.
     calendar = create_calendar(current)
     app.state.booking_service = BookingService(calendar)
+    # The call history uses the same kind of storage as the calendar.
+    app.state.call_service = CallService(create_call_store(current), calendar)
     log_event(logger, logging.INFO, "app_started", calendar_backend=current.calendar_backend)
     yield
+    app.state.call_service.close()
     calendar.close()
     log_event(logger, logging.INFO, "app_stopped")
 
@@ -71,7 +76,7 @@ app = FastAPI(
         "Shop hours: Monday-Saturday 09:00-18:00 (Europe/Skopje), closed Sunday.\n\n"
         "**Authentication:** the booking endpoints need the `X-API-Key` header. "
         "Click **Authorize** and paste your API key to try them here. "
-        "`/vapi/tools` instead checks the secret Vapi sends (`VAPI_SECRET`).\n\n"
+        "`/vapi/events` and `/vapi/tools` instead check the secret Vapi sends (`VAPI_SECRET`).\n\n"
         "Every response contains `success` and a `message` the voice agent can read to the caller. "
         "Errors also contain an `error` code and, where useful, `suggested_times`."
     ),
@@ -212,4 +217,4 @@ def list_bookings(include_cancelled: bool = False, service: BookingService = Dep
 app.include_router(api)
 app.include_router(vapi.router)
 
-__all__ = ["app", "get_booking_service", "lifespan"]  # get_booking_service: tests override it
+__all__ = ["app", "get_booking_service", "get_call_service", "lifespan"]  # the get_* ones: tests override them
