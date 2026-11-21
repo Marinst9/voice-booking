@@ -1,3 +1,17 @@
+# Start everything:   docker compose up --build
+# Stop:               docker compose down        (add -v to also delete the database)
+#
+# Order: db (healthy) -> migrate (runs `alembic upgrade head`, then exits) -> api
+
+# Shared settings for the two services built from our Dockerfile.
+x-app: &app
+  build: .
+  image: voice-booking-api
+  environment:
+    CALENDAR_BACKEND: postgres
+    # "db" is the database container's name on Docker's internal network.
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-booking}:${POSTGRES_PASSWORD:-booking}@db:5432/${POSTGRES_DB:-booking}
+
 services:
   db:
     image: postgres:17-alpine
@@ -16,6 +30,30 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    env_file: .env  # API_KEY, LOG_LEVEL, shop settings... (`environment` above wins for the DB settings)
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      # /docs needs no API key, so it's a simple "is the server answering?" check.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   pgdata:

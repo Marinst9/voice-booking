@@ -42,6 +42,7 @@ from app.models import (
 settings = get_settings()
 setup_logging(settings.log_level, settings.log_format)
 logger = logging.getLogger("app.api")
+DOCS_PATHS = {"/docs", "/openapi.json", "/docs/oauth2-redirect", "/redoc"}
 
 
 @asynccontextmanager
@@ -116,8 +117,10 @@ async def log_requests(request: Request, call_next):
             )
             response = JSONResponse(status_code=500, content=body.model_dump(exclude_none=True))
         response.headers["X-Request-ID"] = request_id
+        # The docs pages are fetched every few seconds by Docker's health check: keep them out of INFO logs.
+        level = logging.DEBUG if request.url.path in DOCS_PATHS else logging.INFO
         log_event(
-            logger, logging.INFO, "request_completed",
+            logger, level, "request_completed",
             method=request.method, path=request.url.path, status_code=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 1),
         )
