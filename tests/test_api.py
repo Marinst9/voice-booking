@@ -11,22 +11,26 @@ SUNDAY = "2026-11-29"
 
 def book(client, time="14:00", service="Haircut", phone="+389 70 123 456", name="Marko", day=MONDAY):
     """Small helper so tests stay short."""
-    return client.post("/create_booking", json={
-        "customer_name": name,
-        "phone": phone,
-        "service": service,
-        "start_time": f"{day}T{time}",
-    })
+    return client.post(
+        "/create_booking",
+        json={
+            "customer_name": name,
+            "phone": phone,
+            "service": service,
+            "start_time": f"{day}T{time}",
+        },
+    )
 
 
 # ---------- free slot ----------
+
 
 def test_empty_day_has_all_slots(client):
     response = client.post("/check_availability", json={"date": MONDAY, "service": "Haircut"})
     assert response.status_code == 200
     times = response.json()["free_times"]
     assert times[0] == "09:00"
-    assert times[-1] == "17:30"   # 30-minute haircut must end by 18:00
+    assert times[-1] == "17:30"  # 30-minute haircut must end by 18:00
     assert len(times) == 18
 
 
@@ -53,6 +57,7 @@ def test_booked_time_disappears_from_availability(client):
 
 # ---------- double booking ----------
 
+
 def test_double_booking_rejected_with_suggestions(client):
     book(client, "14:00")
     response = book(client, "14:00", phone="070999888", name="Ana")
@@ -77,17 +82,18 @@ def test_suggestions_include_slot_ending_exactly_at_existing_booking(client):
 
 
 def test_overlapping_booking_rejected(client):
-    book(client, "14:00", service="Haircut + Beard")       # 14:00 - 14:50
+    book(client, "14:00", service="Haircut + Beard")  # 14:00 - 14:50
     response = book(client, "14:30", service="Beard trim")  # would start inside it
     assert response.status_code == 409
 
 
 def test_back_to_back_bookings_allowed(client):
-    assert book(client, "14:00").status_code == 200   # 14:00 - 14:30
-    assert book(client, "14:30").status_code == 200   # 14:30 - 15:00
+    assert book(client, "14:00").status_code == 200  # 14:00 - 14:30
+    assert book(client, "14:30").status_code == 200  # 14:30 - 15:00
 
 
 # ---------- closed day ----------
+
 
 def test_sunday_availability_is_closed(client):
     response = client.post("/check_availability", json={"date": SUNDAY, "service": "Haircut"})
@@ -103,6 +109,7 @@ def test_sunday_booking_rejected(client):
 
 
 # ---------- outside opening hours ----------
+
 
 def test_before_opening_rejected(client):
     response = book(client, "08:00")
@@ -123,6 +130,7 @@ def test_service_ending_exactly_at_closing_allowed(client):
 
 # ---------- cancelling ----------
 
+
 def test_cancel_booking(client):
     book(client, "14:00", phone="+389 70 123 456")
     # Same number written differently still matches.
@@ -138,6 +146,7 @@ def test_cancel_unknown_booking(client):
 
 
 # ---------- other checks ----------
+
 
 def test_list_bookings(client):
     book(client, "15:00", name="Ana")
@@ -171,6 +180,7 @@ def test_bad_date_format(client):
 
 
 # ---------- API documentation (/docs) ----------
+
 
 def test_docs_list_every_status_code(client):
     paths = client.get("/openapi.json").json()["paths"]

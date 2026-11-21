@@ -9,8 +9,11 @@ from app.main import app, lifespan
 
 ENDPOINTS = [
     ("post", "/check_availability", {"date": "2026-11-23", "service": "Haircut"}),
-    ("post", "/create_booking", {"customer_name": "Marko", "phone": "070123456",
-                                 "service": "Haircut", "start_time": "2026-11-23T14:00"}),
+    (
+        "post",
+        "/create_booking",
+        {"customer_name": "Marko", "phone": "070123456", "service": "Haircut", "start_time": "2026-11-23T14:00"},
+    ),
     ("post", "/cancel_booking", {"phone": "070123456", "start_time": "2026-11-23T14:00"}),
     ("get", "/bookings", None),
 ]

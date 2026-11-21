@@ -33,6 +33,7 @@ class BookingError(AppError):
 
 # ---------- small helpers for nice spoken text ----------
 
+
 def say_time(moment: datetime) -> str:
     """09:30"""
     return moment.strftime("%H:%M")
@@ -78,6 +79,7 @@ def to_shop_time(moment: datetime) -> datetime:
 
 
 # ---------- the service itself ----------
+
 
 class BookingService:
     def __init__(
@@ -243,9 +245,13 @@ class BookingService:
             except SlotTakenError:
                 raise self._time_taken_error(start, service) from None
         log_event(
-            logger, logging.INFO, "booking_created",
-            booking_id=booking.id, service=booking.service_key,
-            start=booking.start.isoformat(), phone=mask_phone(booking.phone),
+            logger,
+            logging.INFO,
+            "booking_created",
+            booking_id=booking.id,
+            service=booking.service_key,
+            start=booking.start.isoformat(),
+            phone=mask_phone(booking.phone),
         )
         return booking
 
@@ -271,9 +277,13 @@ class BookingService:
                 )
             booking = self.calendar.cancel_booking(found.id)
         log_event(
-            logger, logging.INFO, "booking_cancelled",
-            booking_id=booking.id, service=booking.service_key,
-            start=booking.start.isoformat(), phone=mask_phone(booking.phone),
+            logger,
+            logging.INFO,
+            "booking_cancelled",
+            booking_id=booking.id,
+            service=booking.service_key,
+            start=booking.start.isoformat(),
+            phone=mask_phone(booking.phone),
         )
         return booking
 

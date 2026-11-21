@@ -27,7 +27,6 @@ from app.calendars import Booking, create_calendar
 from app.config import get_settings
 from app.errors import AppError
 from app.logging_config import log_event, request_id_var, setup_logging
-from app.security import require_api_key
 from app.models import (
     AvailabilityResponse,
     BookingListResponse,
@@ -38,6 +37,7 @@ from app.models import (
     CreateBookingRequest,
     ErrorResponse,
 )
+from app.security import require_api_key
 
 settings = get_settings()
 setup_logging(settings.log_level, settings.log_format)
@@ -79,6 +79,7 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
+
 def get_booking_service(request: Request) -> BookingService:
     """FastAPI 'dependency': gives each endpoint the booking service made at startup (tests swap it out)."""
     return request.app.state.booking_service
@@ -98,6 +99,7 @@ def booking_to_out(booking: Booking) -> BookingOut:
 
 
 # ---- Request logging: one log line per request, with a request id ----
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -120,8 +122,12 @@ async def log_requests(request: Request, call_next):
         # The docs pages are fetched every few seconds by Docker's health check: keep them out of INFO logs.
         level = logging.DEBUG if request.url.path in DOCS_PATHS else logging.INFO
         log_event(
-            logger, level, "request_completed",
-            method=request.method, path=request.url.path, status_code=response.status_code,
+            logger,
+            level,
+            "request_completed",
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
             duration_ms=round((time.perf_counter() - started) * 1000, 1),
         )
         return response
@@ -131,11 +137,16 @@ async def log_requests(request: Request, call_next):
 
 # ---- Error handling: always answer with a readable message ----
 
+
 @app.exception_handler(AppError)
 def handle_app_error(request: Request, error: AppError) -> JSONResponse:
     log_event(
-        logger, logging.WARNING, "request_rejected",
-        error=error.code, status_code=error.status_code, path=request.url.path,
+        logger,
+        logging.WARNING,
+        "request_rejected",
+        error=error.code,
+        status_code=error.status_code,
+        path=request.url.path,
     )
     body = ErrorResponse(error=error.code, message=error.message, suggested_times=error.suggested_times)
     return JSONResponse(status_code=error.status_code, content=body.model_dump(exclude_none=True))
@@ -149,7 +160,7 @@ def handle_bad_input(request: Request, error: RequestValidationError) -> JSONRes
     body = ErrorResponse(
         error="invalid_input",
         message=f"Sorry, something was missing or unclear: {', '.join(fields)}. "
-                "Dates must look like 2026-11-23 and times like 2026-11-23T14:00.",
+        "Dates must look like 2026-11-23 and times like 2026-11-23T14:00.",
         details=jsonable_encoder(error.errors()),
     )
     return JSONResponse(status_code=422, content=body.model_dump())
@@ -157,14 +168,15 @@ def handle_bad_input(request: Request, error: RequestValidationError) -> JSONRes
 
 # ---- Endpoints ----
 
+
 @app.post(
     "/check_availability",
     response_model=AvailabilityResponse,
     responses=api_docs.CHECK_AVAILABILITY_RESPONSES,
     summary="List free start times for a day",
     description="Returns every start time on the given date where the chosen service fits "
-                "inside opening hours without overlapping another booking. Times already "
-                "passed today are left out.",
+    "inside opening hours without overlapping another booking. Times already "
+    "passed today are left out.",
 )
 def check_availability(body: CheckAvailabilityRequest, service: BookingService = Depends(get_booking_service)):
     result = service.check_availability(body.date, body.service)
@@ -177,14 +189,14 @@ def check_availability(body: CheckAvailabilityRequest, service: BookingService =
     responses=api_docs.CREATE_BOOKING_RESPONSES,
     summary="Book an appointment",
     description="Creates a booking if the whole appointment fits inside opening hours and does "
-                "not overlap another booking. On a clash it returns **409 time_taken** with the "
-                "nearest free times in `suggested_times`.",
+    "not overlap another booking. On a clash it returns **409 time_taken** with the "
+    "nearest free times in `suggested_times`.",
 )
 def create_booking(body: CreateBookingRequest, service: BookingService = Depends(get_booking_service)):
     booking = service.create_booking(body.customer_name, body.phone, body.service, body.start_time)
     return BookingResponse(
         message=f"You're booked, {booking.customer_name}! {booking.service_name} on "
-                f"{say_day(booking.start.date())} at {say_time(booking.start)}.",
+        f"{say_day(booking.start.date())} at {say_time(booking.start)}.",
         booking=booking_to_out(booking),
     )
 
@@ -195,13 +207,13 @@ def create_booking(body: CreateBookingRequest, service: BookingService = Depends
     responses=api_docs.CANCEL_BOOKING_RESPONSES,
     summary="Cancel an appointment",
     description="Cancels the booking that matches the phone number and start time. "
-                "Spaces and dashes in the phone number are ignored.",
+    "Spaces and dashes in the phone number are ignored.",
 )
 def cancel_booking(body: CancelBookingRequest, service: BookingService = Depends(get_booking_service)):
     booking = service.cancel_booking(body.phone, body.start_time)
     return BookingResponse(
         message=f"Your {booking.service_name} on {say_day(booking.start.date())} "
-                f"at {say_time(booking.start)} has been cancelled.",
+        f"at {say_time(booking.start)} has been cancelled.",
         booking=booking_to_out(booking),
     )
 
@@ -212,7 +224,7 @@ def cancel_booking(body: CancelBookingRequest, service: BookingService = Depends
     responses=api_docs.LIST_BOOKINGS_RESPONSES,
     summary="List all bookings",
     description="Shows confirmed bookings, sorted by start time. Add `?include_cancelled=true` "
-                "to also see cancelled ones. For the shop owner to check, not meant as a voice agent tool.",
+    "to also see cancelled ones. For the shop owner to check, not meant as a voice agent tool.",
 )
 def list_bookings(include_cancelled: bool = False, service: BookingService = Depends(get_booking_service)):
     bookings = service.all_bookings(include_cancelled=include_cancelled)

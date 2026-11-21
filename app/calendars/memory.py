@@ -29,7 +29,8 @@ class InMemoryCalendar(CalendarBackend):
         include_cancelled: bool = False,
     ) -> list[Booking]:
         result = [
-            b for b in self._bookings
+            b
+            for b in self._bookings
             if (include_cancelled or b.status == BookingStatus.CONFIRMED)
             and (start is None or b.end > start)
             and (end is None or b.start < end)

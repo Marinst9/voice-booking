@@ -64,8 +64,10 @@ class AvailabilityResponse(BaseModel):
     free_times: list[str] = Field(description="Free start times, HH:MM", examples=[["09:00", "09:30", "10:00"]])
     message: str = Field(
         description="Sentence to read to the caller",
-        examples=["On Monday 23 November there are 18 free times for a Haircut. "
-                  "The earliest are 09:00, 09:30 and 10:00, and the latest is 17:30."],
+        examples=[
+            "On Monday 23 November there are 18 free times for a Haircut. "
+            "The earliest are 09:00, 09:30 and 10:00, and the latest is 17:30."
+        ],
     )
 
 

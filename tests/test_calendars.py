@@ -19,12 +19,18 @@ from app.config import TIMEZONE
 def make_booking(hour: int, minute: int = 0, minutes: int = 30, booking_id: str = "b1", phone: str = "070123456"):
     start = datetime(2026, 11, 23, hour, minute, tzinfo=TIMEZONE)
     return Booking(
-        id=booking_id, customer_name="Marko", phone=phone, service_key="haircut",
-        service_name="Haircut", start=start, end=start + timedelta(minutes=minutes),
+        id=booking_id,
+        customer_name="Marko",
+        phone=phone,
+        service_key="haircut",
+        service_name="Haircut",
+        start=start,
+        end=start + timedelta(minutes=minutes),
     )
 
 
 # ---------- Same behaviour for memory and postgres ----------
+
 
 def test_add_and_list(calendar):
     stored = calendar.add_booking(make_booking(14))
@@ -78,6 +84,7 @@ def test_list_window(calendar):
 
 # ---------- PostgreSQL only: the database enforces the rules ----------
 
+
 @pytest.mark.postgres
 def test_database_blocks_overlap_even_without_the_app(postgres_calendar):
     postgres_calendar.add_booking(make_booking(14))
@@ -86,9 +93,11 @@ def test_database_blocks_overlap_even_without_the_app(postgres_calendar):
         "VALUES ('raw', 'X', '1', 'haircut', 'Haircut', "
         "'2026-11-23 14:15+01', '2026-11-23 14:45+01')"
     )
-    with pytest.raises(IntegrityError, match="no_overlapping_confirmed_bookings"):
-        with postgres_calendar.engine.begin() as connection:
-            connection.execute(insert)
+    with (
+        pytest.raises(IntegrityError, match="no_overlapping_confirmed_bookings"),
+        postgres_calendar.engine.begin() as connection,
+    ):
+        connection.execute(insert)
 
 
 @pytest.mark.postgres
@@ -97,9 +106,8 @@ def test_database_rejects_unknown_status(postgres_calendar):
         "INSERT INTO bookings (id, customer_name, phone, service_key, service_name, start_time, end_time, status) "
         "VALUES ('raw', 'X', '1', 'haircut', 'Haircut', '2026-11-23 10:00+01', '2026-11-23 10:30+01', 'maybe')"
     )
-    with pytest.raises(IntegrityError, match="ck_bookings_status"):
-        with postgres_calendar.engine.begin() as connection:
-            connection.execute(insert)
+    with pytest.raises(IntegrityError, match="ck_bookings_status"), postgres_calendar.engine.begin() as connection:
+        connection.execute(insert)
 
 
 @pytest.mark.postgres

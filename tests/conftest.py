@@ -32,12 +32,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # ---------- PostgreSQL ----------
 
+
 @pytest.fixture(scope="session")
 def postgres_engine():
     """One database connection pool for the whole test run, with a freshly migrated schema."""
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("TEST_DATABASE_URL is not set (see README: 'Running the tests').")
+        message = "TEST_DATABASE_URL is not set (see README: 'Running the tests')."
+        if os.environ.get("CI"):  # GitHub Actions sets CI=true: never silently skip the database tests there
+            pytest.fail(message)
+        pytest.skip(message)
 
     alembic_cfg = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", url)
@@ -61,6 +65,7 @@ def postgres_calendar(postgres_engine):
 
 
 # ---------- Calendar, service and API client ----------
+
 
 @pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.postgres)])
 def calendar(request) -> CalendarBackend:
