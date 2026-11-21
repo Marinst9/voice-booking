@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Database backups contain customer data
+*-backup.sql
+*.dump
+
 # Virtual environments
 .venv/
 venv/

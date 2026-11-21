@@ -1,4 +1,5 @@
 # Runs on GitHub for every push and pull request. See the "Actions" tab of your repository.
+# Railway's "Wait for CI" setting deploys a commit on main only when this whole workflow passes.
 name: CI
 
 on:
@@ -54,8 +55,28 @@ jobs:
         run: pytest -v -ra
 
   docker:
-    name: Docker image builds
+    name: Docker image (build + production smoke test)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: booking
+          POSTGRES_PASSWORD: booking
+          POSTGRES_DB: booking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U booking -d booking"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    # Settings like on Railway: production mode, a platform-style postgresql:// URL, a custom PORT.
+    env:
+      DATABASE_URL: postgresql://booking:booking@127.0.0.1:5432/booking
+      PROD_ENV: >-
+        -e ENVIRONMENT=production -e CALENDAR_BACKEND=postgres -e PORT=8080
+        -e API_KEY=ci-api-key-0123456789 -e CLIENT_IP_HEADER=X-Real-IP
     steps:
       - uses: actions/checkout@v4
       - name: Check docker-compose.yml is valid
@@ -64,3 +85,21 @@ jobs:
           docker compose config --quiet
       - name: Build the image
         run: docker build -t voice-booking-api .
+      - name: Run the migrations from the image (what Railway's pre-deploy command does)
+        run: docker run --rm --network host -e DATABASE_URL="$DATABASE_URL" voice-booking-api alembic upgrade head
+      - name: Start the image in production mode
+        run: docker run -d --name api --network host -e DATABASE_URL="$DATABASE_URL" $PROD_ENV voice-booking-api
+      - name: Check /health answers and /docs is off
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/health && break
+            sleep 1
+          done
+          echo
+          curl -fsS http://127.0.0.1:8080/health | grep -q '"database":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/docs)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/bookings)" = "401"
+          echo "Production image works."
+      - name: Show the app's logs if something failed
+        if: failure()
+        run: docker logs api || true

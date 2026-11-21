@@ -23,8 +23,11 @@ can read straight to the caller.
 - **API key security** (`X-API-Key` header) with an **Authorize** button in the interactive docs
 - **Structured JSON logs** for every request, booking, cancellation and error, with a request id
 - **Docker Compose**: one command starts the database, runs migrations and starts the API
-- **270+ automated tests**, run against both the in-memory storage and a real PostgreSQL database
-- **CI** on GitHub Actions: lint (ruff), formatting check, all tests, Docker build
+- **Production-ready**: `ENVIRONMENT=production` mode, rate limiting (API, Vapi, admin login lockout), `/health`
+  check, `/docs` off by default, HTTPS-only cookies, and a [step-by-step Railway deployment](#deploying-to-railway)
+  that deploys `main` automatically when CI passes
+- **330+ automated tests**, run against both the in-memory storage and a real PostgreSQL database
+- **CI** on GitHub Actions: lint (ruff), formatting check, all tests, Docker build + production smoke test
 
 ## Architecture
 
@@ -125,8 +128,15 @@ All settings come from environment variables or `.env` (see `.env.example`). Onl
 | `ADMIN_USERNAME` | `admin` | Username for the dashboard at `/admin` |
 | `ADMIN_PASSWORD` | *(none)* | Dashboard password, at least 10 characters. Empty = dashboard login turned off. |
 | `SESSION_SECRET` | *(random at each start)* | Signs the login cookie, at least 32 characters. Set it, or everyone is logged out on restart. |
-| `SESSION_COOKIE_SECURE` | `false` | `true` = the login cookie is only sent over HTTPS. Turn on when the site runs on HTTPS. |
+| `SESSION_COOKIE_SECURE` | *(false in development, true in production)* | `true` = the login cookie is only sent over HTTPS |
 | `SESSION_MAX_AGE_HOURS` | `8` | How long a dashboard login lasts |
+| `ENVIRONMENT` | `development` | `production` = refuse unsafe settings, `/docs` off, secure cookies, HSTS |
+| `DOCS_ENABLED` | *(on in development, off in production)* | Show `/docs`, `/redoc` and `/openapi.json` |
+| `CLIENT_IP_HEADER` | *(none)* | Header with the real client IP behind a trusted proxy (Railway: `X-Real-IP`). Leave empty locally: a client could fake it |
+| `RATE_LIMIT_API_PER_MINUTE` | `60` | Requests per minute per IP to the REST endpoints (`0` = no limit) |
+| `RATE_LIMIT_VAPI_PER_MINUTE` | `300` | Requests per minute per IP to `/vapi/...` |
+| `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Wrong admin logins allowed per IP, and how long that IP is then locked out |
+| `PORT` | `8000` | Port the Docker image listens on (Railway: `8080`) |
 | `CALENDAR_BACKEND` | `memory` | `memory` or `postgres` (Docker Compose always uses `postgres`) |
 | `DATABASE_URL` | – | e.g. `postgresql+psycopg://booking:booking@127.0.0.1:5432/booking` |
 | `SHOP_TIMEZONE` | `Europe/Skopje` | Timezone for all times |
@@ -485,9 +495,207 @@ The stats, for this week (Monday to Sunday, Skopje time):
 - The dashboard has its own login, separate from `API_KEY`: the API key doesn't open it and a dashboard login
   doesn't open the REST API.
 
-**Before putting it on the internet:** serve it over HTTPS and set `SESSION_COOKIE_SECURE=true`. There is no
-limit on login attempts yet, so use a long, random password. The dashboard is also reachable through your ngrok
-address while ngrok runs.
+**Before putting it on the internet:** use `ENVIRONMENT=production` (see [Deploying to Railway](#deploying-to-railway)):
+it makes the cookie HTTPS-only and refuses to start without `SESSION_SECRET`. After `LOGIN_MAX_FAILURES` (5) wrong
+passwords from one IP address, logins from that address are blocked for `LOGIN_LOCKOUT_MINUTES` (15), even with
+the right password. The dashboard is also reachable through your ngrok address while ngrok runs.
+
+## Deploying to Railway
+
+This runs the app 24/7 on [Railway](https://railway.com), without your laptop or ngrok:
+
+```
+Caller ─> Vapi ─> https://<your-app>.up.railway.app/vapi/...  ─┐
+You (browser / phone) ─> https://<your-app>.up.railway.app/admin ┤ Railway: api service (this Dockerfile)
+                                                                  └──> Postgres service (private network)
+git push ─> GitHub Actions (CI) ─ passes ─> Railway builds and deploys main
+                                            └─ pre-deploy: alembic upgrade head
+```
+
+### What it costs
+
+| | |
+|---|---|
+| **Trial** (what this guide uses) | $0. A one-time $5 credit, for 30 days, no credit card |
+| This app's usage | About $4/month (API ≈ 200 MB memory, Postgres ≈ 150 MB, almost no CPU), so the trial credit should last about the 30 days |
+| **After the trial** | Hobby: $5/month, which includes $5 of usage. That's enough for this app, so about $5/month in total |
+
+These are estimates: Railway bills the memory and CPU that are actually used (about $10 per GB of memory and $20
+per vCPU per month).
+
+### What happens when the trial ends
+
+The trial ends after **30 days or when the $5 is used up, whichever comes first**. Then:
+
+- **Your services stop.** The voice assistant's tools stop working, and the dashboard is offline.
+- **The database is kept for 30 more days, then deleted.** Railway deletes trial volumes 30 days after the credit
+  runs out. Upgrading keeps the data.
+- **Your options:**
+  - **Upgrade to Hobby** ($5/month) and redeploy. Everything continues as before.
+  - **Switch to the Free plan** ($0, $1 of usage per month). Services there **sleep** after 5–10 idle minutes
+    and wake on the next request. Waking up can be slower than Vapi's 20-second tool timeout, so the first tool
+    call after a quiet period may fail. Fine for a demo, not for real callers.
+  - **Let it stop.** Take a backup first (see below).
+
+### How much trial credit is left
+
+- Railway shows the remaining trial days and credit in the dashboard: click your **workspace / account name** →
+  **Usage** (it may also be under **Billing**). There you also see the cost so far and an estimate for the month.
+- The cost per service (api vs Postgres) is on the same page, so you can see which one uses the most.
+- Railway also emails you before the trial ends. Check once a week, it's an easy way to avoid surprises.
+
+### Step 1: Create the Railway account
+
+1. Go to https://railway.com and click **Sign in / Login** → **Login with GitHub**, using the GitHub account that
+   owns `Marinst9/voice-booking`. Logging in with GitHub also starts Railway's automatic account verification.
+2. The trial starts automatically. If you see **"Limited Trial"**, your account wasn't verified automatically
+   (this depends on how old and active the GitHub account is); open https://railway.com/verify. A limited trial
+   restricts outgoing connections. This app doesn't make any (it only receives requests and talks to its
+   database over Railway's private network), so it should still work.
+
+### Step 2: Create the project from your GitHub repository
+
+1. In Railway click **New Project** → **Deploy from GitHub repo**.
+2. The first time, click **Configure GitHub App** and allow Railway access to **only** the `voice-booking`
+   repository (it's private, so Railway needs permission). Accept the permissions it asks for, including
+   *actions / checks*, which "Wait for CI" needs.
+3. Select `Marinst9/voice-booking`. Railway finds the `Dockerfile` and starts a first build.
+4. **The first deploy will fail or crash. That's expected:** the database and variables don't exist yet.
+5. Click the new service and rename it to `api` (Settings → the name at the top). Optional, but the rest of this
+   guide calls it `api`.
+
+### Step 3: Add the PostgreSQL database
+
+1. On the project canvas click **+ Create** (or **+ New**) → **Database** → **PostgreSQL**.
+2. Keep the name **`Postgres`**. The variables in the next step refer to it by that name.
+3. Railway starts it with a volume, so the data survives restarts. There's nothing else to configure.
+
+### Step 4: Set the environment variables
+
+1. In PowerShell, in the project folder, run:
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\railway_variables.py
+   ```
+   It prints a block of variables with **new random secrets**: production shouldn't use the same API key and
+   passwords as your laptop. `VAPI_SECRET` is copied from your local `.env`, so your Vapi credential stays the same.
+2. **Save `ADMIN_PASSWORD` and `API_KEY` in a password manager.** You need them later, and running the script
+   again makes new ones.
+3. In Railway open the **api** service → **Variables** → **Raw Editor**, paste the block, and click **Update
+   Variables** (then **Deploy** if Railway asks to apply the changes).
+
+The exact variables (and why):
+
+| Variable | Value | Why |
+|---|---|---|
+| `ENVIRONMENT` | `production` | Safe defaults: `/docs` off, HTTPS-only cookie, HSTS, refuses unsafe settings |
+| `CALENDAR_BACKEND` | `postgres` | Store bookings and calls in the database |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | Railway fills in the database's private address (type it exactly like this) |
+| `PORT` | `8080` | The port the app listens on; the public domain points to it (step 6) |
+| `CLIENT_IP_HEADER` | `X-Real-IP` | The real caller IP for rate limiting (Railway's proxy sets this header) |
+| `API_KEY` | random, 16+ characters | For the REST endpoints (`X-API-Key`) |
+| `VAPI_SECRET` | same as your Vapi credential | Checks that requests to `/vapi/...` really come from Vapi |
+| `ADMIN_USERNAME` | `admin` | Dashboard login |
+| `ADMIN_PASSWORD` | random, 10+ characters | Dashboard login |
+| `SESSION_SECRET` | random, 32+ characters | Signs the dashboard login cookie |
+
+Optional (the defaults are right for production): `DOCS_ENABLED` (set `true` to show `/docs` temporarily),
+`LOG_LEVEL`, `RATE_LIMIT_API_PER_MINUTE`, `RATE_LIMIT_VAPI_PER_MINUTE`, `LOGIN_MAX_FAILURES`,
+`LOGIN_LOCKOUT_MINUTES`, and the shop settings (`OPEN_TIME`, `SERVICES`, ...). The app reads its settings **only
+from these variables**: the Docker image contains no `.env` file.
+
+### Step 5: Service settings (migrations, health check, deploy only after CI)
+
+In the **api** service → **Settings**:
+
+| Section | Setting | Value |
+|---|---|---|
+| Deploy | **Pre-deploy Command** | `alembic upgrade head` |
+| Deploy | **Healthcheck Path** | `/health` |
+| Deploy | **Restart Policy** | On Failure (the default) |
+| Source | **Branch** connected to production | `main` |
+| Source | **Wait for CI** | **On** |
+
+What these do:
+- **Pre-deploy command:** before each new version goes live, Railway runs the database migrations in a separate
+  container with the same variables. If a migration fails, the deploy stops and the old version keeps running.
+- **Healthcheck:** Railway sends traffic to a new version only after `/health` answers `200`, which includes a
+  working database connection.
+- **Wait for CI:** a push to `main` is deployed only after the GitHub Actions workflow (lint, all tests, and a
+  production smoke test of the Docker image) has passed. If CI fails, the deploy is skipped and the current
+  version stays online. The toggle only appears once Railway has the GitHub *checks* permission (step 2).
+
+Railway used to read these settings from a `railway.json` file. That format is deprecated and stops being read on
+2026-12-01, so this project keeps them in the dashboard (the table above is the "config file").
+
+### Step 6: Get the public URL
+
+1. **api** service → **Settings** → **Networking** → **Public Networking** → **Generate Domain**.
+2. If it asks for a port, enter **`8080`** (the `PORT` variable).
+3. You get an address like `https://voice-booking-production-1234.up.railway.app`. It's HTTPS automatically.
+
+### Step 7: Check that it works
+
+Replace `$base` with your address:
+
+```powershell
+$base = "https://voice-booking-production-1234.up.railway.app"
+Invoke-RestMethod "$base/health"                 # status: ok, database: ok
+Invoke-RestMethod "$base/bookings" -Headers @{ "X-API-Key" = "<API_KEY from step 4>" }
+```
+
+- `$base/admin` → log in with `admin` and the `ADMIN_PASSWORD` from step 4.
+- `$base/docs` → **404**, because the docs are off in production (`DOCS_ENABLED=true` turns them on).
+- In Railway, **api** → **Deployments** → **View logs** shows the JSON logs, including `app_started` with
+  `"environment": "production"`.
+
+### Step 8: Point Vapi at the new address
+
+Change every `https://YOUR-NGROK-ADDRESS` to your Railway address. The paths stay the same:
+
+| Where in Vapi | New value |
+|---|---|
+| Tool `get_current_datetime` → Server URL | `https://<your-app>.up.railway.app/vapi/tools` |
+| Tool `check_availability` → Server URL | `https://<your-app>.up.railway.app/vapi/tools` |
+| Tool `create_booking` → Server URL | `https://<your-app>.up.railway.app/vapi/tools` |
+| Tool `cancel_booking` → Server URL | `https://<your-app>.up.railway.app/vapi/tools` |
+| Assistant → Advanced → Webhook Server → Server URL | `https://<your-app>.up.railway.app/vapi/events` |
+
+Keep the same credential on all five: `VAPI_SECRET` didn't change. **Publish** the assistant, then make a test
+call (step 6 of the Vapi section). Afterwards the call is in `$base/admin/calls`. You can now stop ngrok.
+
+### Deploying changes
+
+```powershell
+git push
+```
+
+That's all: CI runs, and if it passes Railway deploys the new version (migrations first). Watch it in GitHub's
+**Actions** tab and in Railway's **Deployments** tab.
+
+### Backups
+
+Don't count on automatic backups on the trial: before the trial ends, and before risky changes, save a copy of the
+database on your PC:
+
+1. **Postgres** service → **Variables** → copy `DATABASE_PUBLIC_URL`.
+2. In PowerShell, in the project folder (Docker Desktop must be running):
+   ```powershell
+   $url = "<DATABASE_PUBLIC_URL>"
+   docker run --rm -v "${PWD}:/backup" postgres:18-alpine pg_dump $url -f /backup/railway-backup.sql
+   ```
+   `railway-backup.sql` is gitignored (it contains customer data). Make one before the trial ends.
+
+### When the deploy doesn't work
+
+| You see | Likely cause |
+|---|---|
+| Deploy fails in **Pre-deploy** | `DATABASE_URL` is wrong: it must be exactly `${{Postgres.DATABASE_URL}}`, and the database must be called `Postgres` |
+| Logs say `ENVIRONMENT=production, but: ...` | A required variable is missing; the message says which |
+| Health check fails / "service unavailable" | `PORT` isn't `8080`, or the domain points to a different port (step 6) |
+| Deploy stays in **Waiting for CI** | CI is still running or failed (GitHub → Actions). If it stays stuck after CI passed, check Railway's GitHub App permissions, or turn Wait for CI off and on |
+| `/admin` login always fails | You're using the local password. Production has its own (step 4) |
+| `429 rate_limited` | Too many requests from one IP. Adjust `RATE_LIMIT_API_PER_MINUTE` if it's legitimate |
+| Vapi says the tool failed | Check the tool URLs (step 8) and the **api** logs for `vapi_tool_call` / `auth_failed` |
 
 ## Database and migrations
 
@@ -535,7 +743,8 @@ Every log line is one JSON object, so log tools can search and filter it:
 Events: `request_completed`, `booking_created`, `booking_cancelled` (with `cancelled_by`: `caller` or `admin`),
 `request_rejected`, `invalid_input`, `auth_failed`, `unhandled_error`, `app_started`, `app_stopped`,
 `vapi_tool_call`, `call_recorded`, `vapi_report_without_call_id`, `admin_login`, `admin_login_failed`,
-`admin_logout`, `csrf_rejected`, `session_secret_missing`. All lines from one request share a `request_id`,
+`admin_logout`, `admin_login_locked`, `csrf_rejected`, `session_secret_missing`, `rate_limited`,
+`health_check_failed`. Requests to `/health` and `/docs` are logged at `DEBUG` (health checks would flood the logs). All lines from one request share a `request_id`,
 which is also returned in the `X-Request-ID` response header (or reused if the caller sends one).
 Phone numbers are masked because they are personal data.
 
@@ -545,7 +754,11 @@ Phone numbers are masked because they are personal data.
 
 1. **Lint**: `ruff check` and `ruff format --check`
 2. **Tests**: all tests, against a real PostgreSQL started by GitHub
-3. **Docker**: validates `docker-compose.yml` and builds the image
+3. **Docker**: validates `docker-compose.yml`, builds the image, then tests it the way Railway runs it: migrations
+   from the image against a fresh PostgreSQL, the app in `ENVIRONMENT=production` on `PORT=8080`, and checks that
+   `/health` reports the database as ok, `/docs` is off and the API needs a key
+
+Railway's **Wait for CI** deploys a push to `main` only when all three pass.
 
 See the results in the **Actions** tab of your GitHub repository.
 
@@ -593,6 +806,18 @@ See the results in the **Actions** tab of your GitHub repository.
 - **Server-rendered dashboard.** Jinja2 HTML pages need no build step, no separate frontend and no API for the
   browser, and they work without JavaScript (only the "Are you sure?" question on Cancel uses it). That's enough
   for a few pages used by one shop owner.
+- **One `ENVIRONMENT` switch instead of many.** Forgetting one of five security settings on the platform is easy;
+  `ENVIRONMENT=production` turns the safe defaults on together, and the app refuses to start if a setting would
+  lose data (memory calendar) or weaken security (no `SESSION_SECRET`, insecure cookie).
+- **Rate limits in memory.** The counters live in the app process, which is right for one replica: no Redis to
+  pay for or run. With several replicas they would need a shared store. Only *failed* logins count toward the
+  lockout, and a locked IP is refused even with the right password, so guessing can't continue slowly.
+- **The client IP header is opt-in.** Behind Railway every request comes from Railway's proxy, so the real IP is
+  read from `X-Real-IP`, which Railway's proxy sets. Locally that header is ignored, because anyone could send
+  it and get around the limits.
+- **Railway settings in the dashboard, not in a file.** Railway's `railway.json` is deprecated (it stops being read
+  on 2026-12-01), and its replacement is applied with the Railway CLI, which needs Node.js. Five dashboard fields
+  are simpler; the README lists them exactly, and the Dockerfile and CI hold everything else.
 - **Session cookie for the dashboard, API key for machines.** People log in once with a password; programs send a
   key with every request. Mixing them would mean storing the API key in the browser.
 
@@ -606,6 +831,7 @@ app/
   booking_service.py   booking rules and spoken messages
   call_service.py      call history: saving calls, linking them to bookings
   security.py          X-API-Key and Vapi credential checks
+  rate_limit.py        per-IP rate limits and the admin login lockout
   dependencies.py      shared FastAPI dependencies
   errors.py            AppError -> friendly JSON
   database.py          shared SQLAlchemy Base (all tables)
@@ -628,6 +854,7 @@ app/
     postgres.py        PostgreSQL call store + table definition
 vapi/                  Vapi tool definitions (tools/*.json) and the assistant's system prompt
 docs/screenshots/      dashboard screenshots for this README (placeholders for now)
+scripts/               railway_variables.py: prints the Railway variables with fresh secrets
 migrations/            Alembic migrations
 tests/                 pytest tests (conftest.py has the shared fixtures)
 docker/postgres-init/  creates the booking_test database
