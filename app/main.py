@@ -11,6 +11,10 @@ Every response has:
 Interactive docs: http://127.0.0.1:8000/docs
 """
 
+import logging
+import time
+import uuid
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -19,6 +23,8 @@ from fastapi.responses import JSONResponse
 from app import api_docs
 from app.booking_service import BookingError, BookingService, say_day, say_time
 from app.calendars import Booking, InMemoryCalendar
+from app.config import get_settings
+from app.logging_config import log_event, request_id_var, setup_logging
 from app.models import (
     AvailabilityResponse,
     BookingListResponse,
@@ -29,6 +35,10 @@ from app.models import (
     CreateBookingRequest,
     ErrorResponse,
 )
+
+settings = get_settings()
+setup_logging(settings.log_level, settings.log_format)
+logger = logging.getLogger("app.api")
 
 app = FastAPI(
     title="Barber Shop Booking API",
@@ -62,10 +72,44 @@ def booking_to_out(booking: Booking) -> BookingOut:
     )
 
 
+# ---- Request logging: one log line per request, with a request id ----
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Reuse the caller's X-Request-ID if it sent one, so logs can be matched across systems.
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    token = request_id_var.set(request_id)
+    started = time.perf_counter()
+    try:
+        try:
+            response = await call_next(request)
+        except Exception:
+            # A bug we didn't expect: log the full error, but give the caller a calm answer.
+            logger.exception("unhandled_error", extra={"fields": {"path": request.url.path}})
+            body = ErrorResponse(
+                error="internal_error",
+                message="Sorry, something went wrong on our side. Please try again in a moment.",
+            )
+            response = JSONResponse(status_code=500, content=body.model_dump(exclude_none=True))
+        response.headers["X-Request-ID"] = request_id
+        log_event(
+            logger, logging.INFO, "request_completed",
+            method=request.method, path=request.url.path, status_code=response.status_code,
+            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
+        return response
+    finally:
+        request_id_var.reset(token)
+
+
 # ---- Error handling: always answer with a readable message ----
 
 @app.exception_handler(BookingError)
 def handle_booking_error(request: Request, error: BookingError) -> JSONResponse:
+    log_event(
+        logger, logging.WARNING, "request_rejected",
+        error=error.code, status_code=error.status_code, path=request.url.path,
+    )
     body = ErrorResponse(error=error.code, message=error.message, suggested_times=error.suggested_times)
     return JSONResponse(status_code=error.status_code, content=body.model_dump(exclude_none=True))
 
@@ -74,6 +118,7 @@ def handle_booking_error(request: Request, error: BookingError) -> JSONResponse:
 def handle_bad_input(request: Request, error: RequestValidationError) -> JSONResponse:
     # e.g. a missing field or a date like "next tuesday" instead of "2026-11-24"
     fields = sorted({str(e["loc"][-1]) for e in error.errors()})
+    log_event(logger, logging.WARNING, "invalid_input", fields=fields, path=request.url.path)
     body = ErrorResponse(
         error="invalid_input",
         message=f"Sorry, something was missing or unclear: {', '.join(fields)}. "

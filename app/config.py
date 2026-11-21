@@ -11,6 +11,7 @@ file (TIMEZONE, OPENING_HOURS, SERVICES, ...).
 
 from datetime import time
 from functools import lru_cache
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -44,6 +45,10 @@ class Settings(BaseSettings):
     close_time: time = time(18, 0)
     slot_step_minutes: int = Field(30, gt=0)  # 30 -> offer 09:00, 09:30, 10:00, ...
     services: list[Service] = DEFAULT_SERVICES  # override with JSON in the SERVICES variable
+
+    # ----- Logging -----
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    log_format: Literal["json", "text"] = "json"  # json for servers, text is easier to read locally
 
     # ----- Checks: fail at startup with a clear message instead of misbehaving later -----
 

@@ -6,10 +6,11 @@ and writes the sentences the voice agent reads back to the caller.
 It does not know or care which calendar is used underneath.
 """
 
+import logging
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
-from typing import Callable
 
 from app.calendars import Booking, CalendarBackend
 from app.config import (
@@ -20,6 +21,9 @@ from app.config import (
     Service,
     find_service,
 )
+from app.logging_config import log_event, mask_phone
+
+logger = logging.getLogger("app.booking")
 
 
 class BookingError(Exception):
@@ -256,6 +260,11 @@ class BookingService:
                 end=end,
             )
             self.calendar.add_booking(booking)
+        log_event(
+            logger, logging.INFO, "booking_created",
+            booking_id=booking.id, service=booking.service_key,
+            start=booking.start.isoformat(), phone=mask_phone(booking.phone),
+        )
         return booking
 
     def cancel_booking(self, phone: str, start: datetime) -> Booking:
@@ -265,6 +274,11 @@ class BookingService:
             for booking in self.calendar.list_bookings():
                 if booking.phone == clean_phone and booking.start == start:
                     self.calendar.remove_booking(booking.id)
+                    log_event(
+                        logger, logging.INFO, "booking_cancelled",
+                        booking_id=booking.id, service=booking.service_key,
+                        start=booking.start.isoformat(), phone=mask_phone(booking.phone),
+                    )
                     return booking
         raise BookingError(
             "booking_not_found",

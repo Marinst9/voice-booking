@@ -1,32 +1,12 @@
 """
-Automated tests. Run them with:  python -m pytest
+API tests. Run them with:  python -m pytest
 
-Each test gets a brand-new empty calendar and a fake "now" of
-Sunday 22 November 2026, 12:00 (Skopje), so results never depend on the real date.
+The `client` fixture (in conftest.py) gives each test an empty calendar
+and a fake "now" of Sunday 22 November 2026, 12:00 (Skopje).
 """
 
-from datetime import datetime
-
-import pytest
-from fastapi.testclient import TestClient
-
-from app.booking_service import BookingService
-from app.calendars import InMemoryCalendar
-from app.config import TIMEZONE
-from app.main import app, get_booking_service
-
-FAKE_NOW = datetime(2026, 11, 22, 12, 0, tzinfo=TIMEZONE)  # a Sunday
 MONDAY = "2026-11-23"
 SUNDAY = "2026-11-29"
-
-
-@pytest.fixture
-def client():
-    """A test client whose API uses a fresh, empty calendar."""
-    fresh_service = BookingService(InMemoryCalendar(), now=lambda: FAKE_NOW)
-    app.dependency_overrides[get_booking_service] = lambda: fresh_service
-    yield TestClient(app)
-    app.dependency_overrides.clear()
 
 
 def book(client, time="14:00", service="Haircut", phone="+389 70 123 456", name="Marko", day=MONDAY):
