@@ -107,6 +107,8 @@ EXAMPLE_BOOKING = {
     "service": "Haircut",
     "start_time": "2026-11-23T14:00:00+01:00",
     "end_time": "2026-11-23T14:30:00+01:00",
+    "status": "confirmed",
+    "created_at": "2026-11-21T18:05:12+01:00",
 }
 
 # ---------- Per-endpoint documentation ----------
@@ -153,7 +155,7 @@ CANCEL_BOOKING_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: _success("The booking was cancelled.", {
         "success": True,
         "message": "Your Haircut on Monday 23 November at 14:00 has been cancelled.",
-        "booking": EXAMPLE_BOOKING,
+        "booking": {**EXAMPLE_BOOKING, "status": "cancelled"},
     }),
     404: _response("No booking matches that phone number and start time.", booking_not_found=BOOKING_NOT_FOUND),
     401: UNAUTHORIZED,
@@ -165,4 +167,5 @@ LIST_BOOKINGS_RESPONSES: dict[int | str, dict[str, Any]] = {
         "success": True, "count": 1, "bookings": [EXAMPLE_BOOKING],
     }),
     401: UNAUTHORIZED,
+    422: INVALID_INPUT,  # e.g. ?include_cancelled=maybe
 }

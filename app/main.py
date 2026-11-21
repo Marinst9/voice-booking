@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 
 from app import api_docs
 from app.booking_service import BookingService, say_day, say_time
-from app.calendars import Booking, InMemoryCalendar
+from app.calendars import Booking, create_calendar
 from app.config import get_settings
 from app.errors import AppError
 from app.logging_config import log_event, request_id_var, setup_logging
@@ -47,10 +47,18 @@ logger = logging.getLogger("app.api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Runs once when the server starts (before `yield`) and stops (after)."""
-    if get_settings().api_key is None:
+    current = get_settings()
+    if current.api_key is None:
         raise RuntimeError("API_KEY is not set. Copy .env.example to .env and set API_KEY.")
-    log_event(logger, logging.INFO, "app_started")
+
+    # ---- Which calendar to use: decided by CALENDAR_BACKEND (memory or postgres) ----
+    # To add Google Calendar later, add it to create_calendar(); nothing here changes.
+    calendar = create_calendar(current)
+    app.state.booking_service = BookingService(calendar)
+    log_event(logger, logging.INFO, "app_started", calendar_backend=current.calendar_backend)
     yield
+    calendar.close()
+    log_event(logger, logging.INFO, "app_stopped")
 
 
 app = FastAPI(
@@ -70,15 +78,9 @@ app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
-# ---- Which calendar to use ----
-# To switch to Google Calendar later, only this line changes, e.g.:
-#   _service = BookingService(GoogleCalendar(...))
-_service = BookingService(InMemoryCalendar())
-
-
-def get_booking_service() -> BookingService:
-    """FastAPI 'dependency': gives each endpoint the booking service (tests swap it out)."""
-    return _service
+def get_booking_service(request: Request) -> BookingService:
+    """FastAPI 'dependency': gives each endpoint the booking service made at startup (tests swap it out)."""
+    return request.app.state.booking_service
 
 
 def booking_to_out(booking: Booking) -> BookingOut:
@@ -89,6 +91,8 @@ def booking_to_out(booking: Booking) -> BookingOut:
         service=booking.service_name,
         start_time=booking.start,
         end_time=booking.end,
+        status=booking.status.value,
+        created_at=booking.created_at,
     )
 
 
@@ -204,9 +208,9 @@ def cancel_booking(body: CancelBookingRequest, service: BookingService = Depends
     response_model=BookingListResponse,
     responses=api_docs.LIST_BOOKINGS_RESPONSES,
     summary="List all bookings",
-    description="Shows every booking, sorted by start time. For the shop owner to check, "
-                "not meant as a voice agent tool.",
+    description="Shows confirmed bookings, sorted by start time. Add `?include_cancelled=true` "
+                "to also see cancelled ones. For the shop owner to check, not meant as a voice agent tool.",
 )
-def list_bookings(service: BookingService = Depends(get_booking_service)):
-    bookings = service.all_bookings()
+def list_bookings(include_cancelled: bool = False, service: BookingService = Depends(get_booking_service)):
+    bookings = service.all_bookings(include_cancelled=include_cancelled)
     return BookingListResponse(count=len(bookings), bookings=[booking_to_out(b) for b in bookings])

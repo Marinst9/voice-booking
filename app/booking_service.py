@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
-from app.calendars import Booking, CalendarBackend
+from app.calendars import Booking, CalendarBackend, SlotTakenError
 from app.config import (
     OPENING_HOURS,
     SERVICES,
@@ -222,18 +222,15 @@ class BookingService:
                 suggested_times=times,
             )
 
-        # The lock makes "check if free" + "save" one step, so no double booking can sneak in.
+        # Two layers of protection against double bookings:
+        #  1. The lock + check below handle callers inside this one server process.
+        #  2. The calendar itself raises SlotTakenError (PostgreSQL enforces it in the
+        #     database), which also covers several server processes at once.
         with self._lock:
             if self.calendar.list_bookings(start, end):
-                sentence, times = self._suggestion(start, service)
-                raise BookingError(
-                    "time_taken",
-                    f"Sorry, that time is already taken. {sentence}",
-                    status_code=409,
-                    suggested_times=times,
-                )
-            booking = Booking(
-                id=uuid.uuid4().hex[:8],
+                raise self._time_taken_error(start, service)
+            new_booking = Booking(
+                id=uuid.uuid4().hex,
                 customer_name=customer_name.strip(),
                 phone=clean_phone,
                 service_key=service.key,
@@ -241,7 +238,10 @@ class BookingService:
                 start=start,
                 end=end,
             )
-            self.calendar.add_booking(booking)
+            try:
+                booking = self.calendar.add_booking(new_booking)
+            except SlotTakenError:
+                raise self._time_taken_error(start, service) from None
         log_event(
             logger, logging.INFO, "booking_created",
             booking_id=booking.id, service=booking.service_key,
@@ -249,24 +249,33 @@ class BookingService:
         )
         return booking
 
-    def cancel_booking(self, phone: str, start: datetime) -> Booking:
-        start = to_shop_time(start)
-        clean_phone = normalize_phone(phone)
-        with self._lock:
-            for booking in self.calendar.list_bookings():
-                if booking.phone == clean_phone and booking.start == start:
-                    self.calendar.remove_booking(booking.id)
-                    log_event(
-                        logger, logging.INFO, "booking_cancelled",
-                        booking_id=booking.id, service=booking.service_key,
-                        start=booking.start.isoformat(), phone=mask_phone(booking.phone),
-                    )
-                    return booking
-        raise BookingError(
-            "booking_not_found",
-            f"Sorry, I couldn't find a booking for that phone number at {say_time(start)} on {say_day(start.date())}.",
-            status_code=404,
+    def _time_taken_error(self, start: datetime, service: Service) -> BookingError:
+        sentence, times = self._suggestion(start, service)
+        return BookingError(
+            "time_taken",
+            f"Sorry, that time is already taken. {sentence}",
+            status_code=409,
+            suggested_times=times,
         )
 
-    def all_bookings(self) -> list[Booking]:
-        return self.calendar.list_bookings()
+    def cancel_booking(self, phone: str, start: datetime) -> Booking:
+        start = to_shop_time(start)
+        with self._lock:
+            found = self.calendar.find_booking(normalize_phone(phone), start)
+            if found is None:
+                raise BookingError(
+                    "booking_not_found",
+                    f"Sorry, I couldn't find a booking for that phone number at "
+                    f"{say_time(start)} on {say_day(start.date())}.",
+                    status_code=404,
+                )
+            booking = self.calendar.cancel_booking(found.id)
+        log_event(
+            logger, logging.INFO, "booking_cancelled",
+            booking_id=booking.id, service=booking.service_key,
+            start=booking.start.isoformat(), phone=mask_phone(booking.phone),
+        )
+        return booking
+
+    def all_bookings(self, include_cancelled: bool = False) -> list[Booking]:
+        return self.calendar.list_bookings(include_cancelled=include_cancelled)

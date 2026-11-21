@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     slot_step_minutes: int = Field(30, gt=0)  # 30 -> offer 09:00, 09:30, 10:00, ...
     services: list[Service] = DEFAULT_SERVICES  # override with JSON in the SERVICES variable
 
+    # ----- Storage -----
+    # "memory" = fake calendar (lost on restart), "postgres" = real database.
+    calendar_backend: Literal["memory", "postgres"] = "memory"
+    # e.g. postgresql+psycopg://booking:booking@127.0.0.1:5432/booking
+    database_url: str | None = None
+
     # ----- Logging -----
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "text"] = "json"  # json for servers, text is easier to read locally
@@ -79,6 +85,12 @@ class Settings(BaseSettings):
     def _close_after_open(self) -> "Settings":
         if self.close_time <= self.open_time:
             raise ValueError("CLOSE_TIME must be later than OPEN_TIME")
+        return self
+
+    @model_validator(mode="after")
+    def _postgres_needs_url(self) -> "Settings":
+        if self.calendar_backend == "postgres" and not self.database_url:
+            raise ValueError("CALENDAR_BACKEND=postgres needs DATABASE_URL")
         return self
 
     # ----- Handy derived values -----

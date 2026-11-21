@@ -75,3 +75,6 @@ def setup_logging(level: str = "INFO", log_format: str = "json") -> None:
     root.setLevel(level.upper())
     # Uvicorn's own access log would duplicate our request log.
     logging.getLogger("uvicorn.access").disabled = True
+    # Libraries that are chatty at INFO level.
+    for noisy in ("httpx", "sqlalchemy.engine"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)

@@ -23,8 +23,9 @@ class CheckAvailabilityRequest(BaseModel):
 
 
 class CreateBookingRequest(BaseModel):
-    customer_name: str = Field(min_length=1, examples=["Marko"])
-    phone: str = Field(min_length=1, examples=["+389 70 123 456"])
+    # max_length matches the database columns, so long input gets a clear 422 instead of a crash.
+    customer_name: str = Field(min_length=1, max_length=100, examples=["Marko"])
+    phone: str = Field(min_length=1, max_length=32, examples=["+389 70 123 456"])
     service: str = Field(description="Haircut, Beard trim or Haircut + Beard", examples=["Haircut + Beard"])
     start_time: datetime = Field(
         description="Start in Skopje time, format YYYY-MM-DDTHH:MM",
@@ -33,7 +34,9 @@ class CreateBookingRequest(BaseModel):
 
 
 class CancelBookingRequest(BaseModel):
-    phone: str = Field(min_length=1, description="The phone number used when booking", examples=["+389 70 123 456"])
+    phone: str = Field(
+        min_length=1, max_length=32, description="The phone number used when booking", examples=["+389 70 123 456"]
+    )
     start_time: datetime = Field(description="Start time of the booking to cancel", examples=["2026-11-23T14:00"])
 
 
@@ -49,6 +52,8 @@ class BookingOut(BaseModel):
     service: str = Field(examples=["Haircut"])
     start_time: datetime = Field(examples=["2026-11-23T14:00:00+01:00"])
     end_time: datetime = Field(examples=["2026-11-23T14:30:00+01:00"])
+    status: Literal["confirmed", "cancelled"] = Field(examples=["confirmed"])
+    created_at: datetime | None = Field(description="When the booking was made", examples=["2026-11-21T18:05:12+01:00"])
 
 
 class AvailabilityResponse(BaseModel):
