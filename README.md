@@ -80,8 +80,12 @@ Success:
 Error (HTTP 409):
 ```json
 { "success": false, "error": "time_taken",
-  "message": "Sorry, that time is already taken. The nearest free times are 13:30 and 14:30." }
+  "message": "Sorry, that time is already taken. The nearest free times are 13:30 and 14:30.",
+  "suggested_times": ["13:30", "14:30"] }
 ```
+
+`suggested_times` lists nearby free start times, so the agent can offer them without parsing the sentence.
+Every endpoint's possible status codes and example responses are documented at `/docs`.
 
 Error codes: `time_taken`, `closed_day`, `outside_hours`, `date_in_past`, `time_in_past`,
 `unknown_service`, `invalid_phone`, `invalid_name`, `booking_not_found`, `invalid_input`.

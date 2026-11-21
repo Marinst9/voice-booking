@@ -81,6 +81,19 @@ def test_double_booking_rejected_with_suggestions(client):
     assert data["success"] is False
     assert data["error"] == "time_taken"
     assert data["message"] == "Sorry, that time is already taken. The nearest free times are 13:30 and 14:30."
+    assert data["suggested_times"] == ["13:30", "14:30"]
+
+
+def test_suggestions_include_slot_ending_exactly_at_existing_booking(client):
+    # Existing booking: 14:00-14:30. A 13:30 Haircut ends at exactly 14:00,
+    # which touches it but doesn't overlap, so 13:30 must be offered.
+    book(client, "14:00", service="Haircut")
+    response = book(client, "14:00", service="Haircut", phone="070999888", name="Ana")
+    assert response.status_code == 409
+    assert "13:30" in response.json()["suggested_times"]
+
+    # And the suggestion really is bookable.
+    assert book(client, "13:30", service="Haircut", phone="070999888", name="Ana").status_code == 200
 
 
 def test_overlapping_booking_rejected(client):
@@ -174,3 +187,31 @@ def test_bad_date_format(client):
     response = client.post("/check_availability", json={"date": "next tuesday", "service": "Haircut"})
     assert response.status_code == 422
     assert response.json()["success"] is False
+    assert response.json()["error"] == "invalid_input"
+
+
+# ---------- API documentation (/docs) ----------
+
+def test_docs_list_every_status_code(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    documented = {
+        "/check_availability": set(paths["/check_availability"]["post"]["responses"]),
+        "/create_booking": set(paths["/create_booking"]["post"]["responses"]),
+        "/cancel_booking": set(paths["/cancel_booking"]["post"]["responses"]),
+        "/bookings": set(paths["/bookings"]["get"]["responses"]),
+    }
+    assert documented == {
+        "/check_availability": {"200", "400", "422"},
+        "/create_booking": {"200", "400", "409", "422"},
+        "/cancel_booking": {"200", "404", "422"},
+        "/bookings": {"200"},
+    }
+
+
+def test_docs_error_examples_use_error_model(client):
+    create = client.get("/openapi.json").json()["paths"]["/create_booking"]["post"]
+    conflict = create["responses"]["409"]["content"]["application/json"]
+    assert conflict["schema"]["$ref"].endswith("/ErrorResponse")
+    assert conflict["examples"]["time_taken"]["value"]["error"] == "time_taken"
+    assert {"closed_day", "outside_hours"} <= set(create["responses"]["400"]["content"]["application/json"]["examples"])
+    assert create["summary"] == "Book an appointment"

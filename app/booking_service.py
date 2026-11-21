@@ -30,11 +30,19 @@ class BookingError(Exception):
     `code` is a short machine-readable label (handy for the AI agent and for tests).
     """
 
-    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        suggested_times: list[str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        # Alternative start times (e.g. ["13:30", "14:30"]) so the agent can offer them directly.
+        self.suggested_times = suggested_times or []
 
 
 # ---------- small helpers for nice spoken text ----------
@@ -148,14 +156,19 @@ class BookingService:
         closest = sorted(free, key=lambda t: abs(t - around))[:count]
         return sorted(closest)
 
-    def _suggestion(self, around: datetime, service: Service) -> str:
-        """'The nearest free times are 14:00 and 14:30.' (or a 'fully booked' sentence)"""
-        options = self.nearest_free_times(around, service)
-        if not options:
-            return f"There are no free times left on {say_day(around.date())}, please try another day."
-        if len(options) == 1:
-            return f"The nearest free time is {say_time(options[0])}."
-        return f"The nearest free times are {say_list([say_time(t) for t in options])}."
+    def _suggestion(self, around: datetime, service: Service) -> tuple[str, list[str]]:
+        """
+        Returns a sentence plus the times in it, e.g.
+        ('The nearest free times are 13:30 and 14:30.', ['13:30', '14:30'])
+        """
+        times = [say_time(t) for t in self.nearest_free_times(around, service)]
+        if not times:
+            sentence = f"There are no free times left on {say_day(around.date())}, please try another day."
+        elif len(times) == 1:
+            sentence = f"The nearest free time is {times[0]}."
+        else:
+            sentence = f"The nearest free times are {say_list(times)}."
+        return sentence, times
 
     def _check_day_is_bookable(self, day: date) -> None:
         if day < self.now().date():
@@ -205,25 +218,33 @@ class BookingService:
 
         self._check_day_is_bookable(start.date())
         if start <= self.now():
-            raise BookingError("time_in_past", f"Sorry, {say_time(start)} has already passed today. {self._suggestion(start, service)}")
+            sentence, times = self._suggestion(start, service)
+            raise BookingError(
+                "time_in_past",
+                f"Sorry, {say_time(start)} has already passed today. {sentence}",
+                suggested_times=times,
+            )
 
         opens, closes = self.opening_window(start.date())
         if start < opens or end > closes:
+            sentence, times = self._suggestion(start, service)
             raise BookingError(
                 "outside_hours",
                 f"Sorry, a {service.name} at {say_time(start)} doesn't fit in our opening hours. "
                 f"On {start:%A}s we're open {say_time(opens)} to {say_time(closes)}, "
-                f"and a {service.name} takes {service.duration_minutes} minutes. "
-                f"{self._suggestion(start, service)}",
+                f"and a {service.name} takes {service.duration_minutes} minutes. {sentence}",
+                suggested_times=times,
             )
 
         # The lock makes "check if free" + "save" one step, so no double booking can sneak in.
         with self._lock:
             if self.calendar.list_bookings(start, end):
+                sentence, times = self._suggestion(start, service)
                 raise BookingError(
                     "time_taken",
-                    f"Sorry, that time is already taken. {self._suggestion(start, service)}",
+                    f"Sorry, that time is already taken. {sentence}",
                     status_code=409,
+                    suggested_times=times,
                 )
             booking = Booking(
                 id=uuid.uuid4().hex[:8],
