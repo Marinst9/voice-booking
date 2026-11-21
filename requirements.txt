@@ -8,5 +8,9 @@ pydantic-settings>=2.6
 sqlalchemy>=2.0.36
 alembic>=1.14
 psycopg[binary]>=3.2
+# Admin dashboard: HTML templates, HTML form parsing, signed session cookies
+jinja2>=3.1.6
+python-multipart>=0.0.20
+itsdangerous>=2.2
 # Timezone data (Windows and slim Docker images don't ship it; needed for Europe/Skopje)
 tzdata>=2024.1

@@ -34,6 +34,17 @@ def test_services_can_be_set_as_json(monkeypatch):
     assert make_settings().services[0].name == "Shave"
 
 
+def test_empty_values_in_env_file_mean_not_set(tmp_path):
+    """Copying .env.example leaves e.g. `VAPI_SECRET=` empty; that must not stop the server from starting."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("VAPI_SECRET=\nADMIN_PASSWORD=\nSESSION_SECRET=\nADMIN_USERNAME=\n", encoding="utf-8")
+    s = Settings(_env_file=env_file)
+    assert s.vapi_secret is None
+    assert s.admin_password is None
+    assert s.session_secret is None
+    assert s.admin_username == "admin"  # the default
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -41,6 +52,8 @@ def test_services_can_be_set_as_json(monkeypatch):
         {"open_days": "mon,funday"},  # not a day
         {"shop_timezone": "Mars/Olympus"},  # not a timezone
         {"slot_step_minutes": 0},
+        {"admin_password": "short"},  # at least 10 characters
+        {"session_secret": "too-short"},  # at least 32 characters
     ],
 )
 def test_invalid_settings_are_rejected(overrides):

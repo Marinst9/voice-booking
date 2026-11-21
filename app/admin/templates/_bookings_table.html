@@ -1,0 +1,34 @@
+{# A table of bookings with a Cancel button. Used twice on the dashboard (today and upcoming). #}
+{% if bookings %}
+<table>
+  <thead>
+    <tr><th>{{ "Time" if time_only else "When" }}</th><th>Customer</th><th>Phone</th><th>Service</th><th>From</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for b in bookings %}
+    <tr>
+      <td data-label="{{ 'Time' if time_only else 'When' }}">
+        {{ b.start | when(not time_only) }}–{{ b.end | when(false) }}
+      </td>
+      <td data-label="Customer">{{ b.customer_name }}</td>
+      <td data-label="Phone"><a href="tel:{{ b.phone }}">{{ b.phone }}</a></td>
+      <td data-label="Service">{{ b.service_name }}</td>
+      <td data-label="From">
+        {% if b.call_id %}<a href="/admin/calls/{{ b.call_id | urlencode }}">Phone call</a>{% else %}<span class="muted">API</span>{% endif %}
+      </td>
+      <td class="actions">
+        {# The question sits in a data- attribute (safely escaped), not inside the JavaScript code. #}
+        <form class="inline" method="post" action="/admin/bookings/{{ b.id }}/cancel"
+              data-question="Cancel the booking for {{ b.customer_name }} on {{ b.start | when }}?"
+              onsubmit="return confirm(this.dataset.question);">
+          <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
+          <button class="danger" type="submit">Cancel</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="card empty">{{ empty_text }}</div>
+{% endif %}

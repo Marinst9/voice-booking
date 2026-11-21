@@ -26,7 +26,7 @@ from app.logging_config import log_event
 logger = logging.getLogger("app.security")
 
 
-def _matches(sent: str | None, expected: SecretStr | None) -> bool:
+def secret_matches(sent: str | None, expected: SecretStr | None) -> bool:
     """
     True only if a secret is configured AND the sent value equals it.
 
@@ -52,7 +52,7 @@ def require_api_key(
     api_key: str | None = Security(api_key_header),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    if not _matches(api_key, settings.api_key):
+    if not secret_matches(api_key, settings.api_key):
         log_event(logger, logging.WARNING, "auth_failed", path=request.url.path, key_sent=api_key is not None)
         raise AppError(
             "invalid_api_key",
@@ -83,7 +83,7 @@ def require_vapi_secret(
     settings: Settings = Depends(get_settings),
 ) -> None:
     token = bearer.credentials if bearer else None
-    if not (_matches(token, settings.vapi_secret) or _matches(legacy_secret, settings.vapi_secret)):
+    if not (secret_matches(token, settings.vapi_secret) or secret_matches(legacy_secret, settings.vapi_secret)):
         log_event(
             logger,
             logging.WARNING,

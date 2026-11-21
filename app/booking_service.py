@@ -328,6 +328,9 @@ class BookingService:
     def all_bookings(self, include_cancelled: bool = False) -> list[Booking]:
         return self.calendar.list_bookings(include_cancelled=include_cancelled)
 
-    def bookings_between(self, start: datetime, end: datetime) -> list[Booking]:
-        """Confirmed bookings that overlap [start, end), sorted by start time."""
+    def bookings_between(self, start: datetime, end: datetime | None = None) -> list[Booking]:
+        """Confirmed bookings that overlap [start, end), sorted by start time. No end = everything after start."""
         return self.calendar.list_bookings(start, end)
+
+    def get_booking(self, booking_id: str) -> Booking | None:
+        return self.calendar.get_booking(booking_id)

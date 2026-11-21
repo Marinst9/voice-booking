@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% set active = "calls" %}
+{% block title %}Call{% endblock %}
+{% block content %}
+<p><a href="/admin/calls">← All calls</a></p>
+<h1>Call on {{ (call.started_at or call.created_at) | when }}</h1>
+
+<div class="card" style="margin-top: 16px;">
+  <dl class="facts">
+    <dt>Caller</dt><dd>{{ call.customer_number or "Web call" }}</dd>
+    <dt>Started</dt><dd>{{ call.started_at | when }}</dd>
+    <dt>Ended</dt><dd>{{ call.ended_at | when }}</dd>
+    <dt>Duration</dt><dd>{{ call.duration_seconds | duration }}</dd>
+    <dt>Ended because</dt><dd>{{ call.ended_reason | ended_reason }}</dd>
+    <dt>Cost</dt><dd>{{ call.cost | money }}</dd>
+    <dt>Booking</dt>
+    <dd>
+      {% if booking %}
+        {{ booking.service_name }} for {{ booking.customer_name }}, {{ booking.start | when }}
+        {% if booking.status.value == "cancelled" %}<span class="badge cancelled">Cancelled</span>{% else %}<span class="badge yes">Confirmed</span>{% endif %}
+      {% elif call.booking_id %}
+        <span class="muted">Booking {{ call.booking_id }} (no longer in the calendar)</span>
+      {% else %}
+        <span class="badge no">No booking</span>
+      {% endif %}
+    </dd>
+    <dt>Vapi call id</dt><dd><code>{{ call.id }}</code></dd>
+  </dl>
+</div>
+
+<h2>Summary</h2>
+<div class="card summary">{{ call.summary or "No summary (Vapi makes one when the call has enough content)." }}</div>
+
+<h2>Transcript</h2>
+{% if lines %}
+<div class="transcript">
+  {% for line in lines %}
+    <div class="line {{ line.side }}">{% if line.speaker %}<span class="who">{{ line.speaker }}</span>{% endif %}{{ line.text }}</div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">No transcript.</div>
+{% endif %}
+{% endblock %}

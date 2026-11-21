@@ -36,7 +36,13 @@ DEFAULT_SERVICES = [
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        # `VAPI_SECRET=` (empty) in .env means "not set", not "set to an empty string".
+        env_ignore_empty=True,
+    )
 
     # ----- Shop -----
     shop_timezone: str = "Europe/Skopje"
@@ -63,6 +69,17 @@ class Settings(BaseSettings):
     # The token Vapi sends with every tool call (set the same value in a Vapi "Bearer Token" credential).
     # Optional: without it, /vapi/tools rejects every request.
     vapi_secret: SecretStr | None = Field(None, min_length=16)
+
+    # ----- Admin dashboard (/admin) -----
+    admin_username: str = Field("admin", min_length=1)
+    # No password = the dashboard login is turned off.
+    admin_password: SecretStr | None = Field(None, min_length=10)
+    # Signs the login cookie so nobody can forge one. Without it, a random one is made at every start
+    # (works, but everyone is logged out when the server restarts).
+    session_secret: SecretStr | None = Field(None, min_length=32)
+    # True = the browser only sends the login cookie over HTTPS. Turn on when the site is served over HTTPS.
+    session_cookie_secure: bool = False
+    session_max_age_hours: int = Field(8, gt=0)  # log in again after this long
 
     # ----- Checks: fail at startup with a clear message instead of misbehaving later -----
 

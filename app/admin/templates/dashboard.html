@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set active = "bookings" %}
+{% block title %}Bookings{% endblock %}
+{% block content %}
+<h1>Bookings</h1>
+<p class="muted">{{ now | when }} · this week is {{ week_start.day }} {{ "{:%b}".format(week_start) }} – {{ week_end.day }} {{ "{:%b}".format(week_end) }}</p>
+
+<section class="stats" aria-label="This week">
+  <div class="card stat">
+    <div class="value">{{ stats.bookings_this_week }}</div>
+    <div class="label">Bookings this week</div>
+  </div>
+  <div class="card stat">
+    <div class="value">{{ stats.calls_this_week }}</div>
+    <div class="label">Calls this week</div>
+  </div>
+  <div class="card stat">
+    <div class="value">{{ stats.booking_rate }}</div>
+    <div class="label">Calls that ended in a booking{% if stats.calls_this_week %} ({{ stats.booked_calls }} of {{ stats.calls_this_week }}){% endif %}</div>
+  </div>
+</section>
+
+<h2>Today</h2>
+{% with bookings=today, time_only=true, empty_text="No bookings today." %}{% include "_bookings_table.html" %}{% endwith %}
+
+<h2>Upcoming</h2>
+{% with bookings=upcoming, time_only=false, empty_text="No upcoming bookings." %}{% include "_bookings_table.html" %}{% endwith %}
+{% endblock %}

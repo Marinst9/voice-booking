@@ -30,6 +30,8 @@ from app.main import app, get_booking_service, get_call_service
 FAKE_NOW = datetime(2026, 11, 22, 12, 0, tzinfo=TIMEZONE)  # a Sunday
 TEST_API_KEY = "test-api-key-0123456789"
 TEST_VAPI_SECRET = "test-vapi-secret-0123456789"
+TEST_ADMIN_USERNAME = "owner"
+TEST_ADMIN_PASSWORD = "test-admin-password-123"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -111,7 +113,13 @@ def call_service(call_store, calendar) -> CallService:
 @pytest.fixture
 def test_settings() -> Settings:
     # _env_file=None: ignore any real .env on this computer, so tests behave the same everywhere.
-    return Settings(_env_file=None, api_key=TEST_API_KEY, vapi_secret=TEST_VAPI_SECRET)
+    return Settings(
+        _env_file=None,
+        api_key=TEST_API_KEY,
+        vapi_secret=TEST_VAPI_SECRET,
+        admin_username=TEST_ADMIN_USERNAME,
+        admin_password=TEST_ADMIN_PASSWORD,
+    )
 
 
 @pytest.fixture

@@ -12,16 +12,21 @@ Interactive docs: http://127.0.0.1:8000/docs
 """
 
 import logging
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 
 from app import api_docs
+from app.admin import routes as admin
+from app.admin.auth import AdminLoginRequired, CsrfError
 from app.booking_service import BookingService, booked_message, cancelled_message
 from app.calendars import create_calendar
 from app.call_service import CallService
@@ -62,7 +67,15 @@ async def lifespan(app: FastAPI):
     app.state.booking_service = BookingService(calendar)
     # The call history uses the same kind of storage as the calendar.
     app.state.call_service = CallService(create_call_store(current), calendar)
-    log_event(logger, logging.INFO, "app_started", calendar_backend=current.calendar_backend)
+    log_event(
+        logger,
+        logging.INFO,
+        "app_started",
+        calendar_backend=current.calendar_backend,
+        admin_login_enabled=current.admin_password is not None,
+    )
+    if current.session_secret is None:
+        log_event(logger, logging.WARNING, "session_secret_missing", effect="admins are logged out on every restart")
     yield
     app.state.call_service.close()
     calendar.close()
@@ -83,6 +96,16 @@ app = FastAPI(
     lifespan=lifespan,
     # Remember the key you entered in /docs after a page reload.
     swagger_ui_parameters={"persistAuthorization": True},
+)
+
+# The admin dashboard's login cookie. Signed with SESSION_SECRET so it can't be forged.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=(settings.session_secret.get_secret_value() if settings.session_secret else secrets.token_urlsafe(32)),
+    session_cookie="admin_session",
+    max_age=settings.session_max_age_hours * 3600,
+    same_site="lax",  # not sent with form POSTs from other websites
+    https_only=settings.session_cookie_secure,
 )
 
 # The booking endpoints all require X-API-Key. /docs and /openapi.json are not on this router, so they stay open.
@@ -142,6 +165,20 @@ def handle_app_error(request: Request, error: AppError) -> JSONResponse:
     )
     body = ErrorResponse(error=error.code, message=error.message, suggested_times=error.suggested_times)
     return JSONResponse(status_code=error.status_code, content=body.model_dump(exclude_none=True))
+
+
+@app.exception_handler(AdminLoginRequired)
+def handle_admin_login_required(request: Request, error: AdminLoginRequired) -> RedirectResponse:
+    # Not logged in: go to the login page, and come back here afterwards.
+    return RedirectResponse(f"/admin/login?next={quote(error.next_path)}", status_code=303)
+
+
+@app.exception_handler(CsrfError)
+def handle_csrf_error(request: Request, error: CsrfError) -> PlainTextResponse:
+    return PlainTextResponse(
+        "This form has expired. Go back, reload the page and try again.",
+        status_code=403,
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -216,5 +253,6 @@ def list_bookings(include_cancelled: bool = False, service: BookingService = Dep
 
 app.include_router(api)
 app.include_router(vapi.router)
+app.include_router(admin.router)  # /admin: HTML pages with their own login (app/admin/)
 
 __all__ = ["app", "get_booking_service", "get_call_service", "lifespan"]  # the get_* ones: tests override them
