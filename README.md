@@ -24,8 +24,9 @@ can read straight to the caller.
 - **Structured JSON logs** for every request, booking, cancellation and error, with a request id
 - **Docker Compose**: one command starts the database, runs migrations and starts the API
 - **Production-ready**: `ENVIRONMENT=production` mode, rate limiting (API, Vapi, admin login lockout), `/health`
-  check, `/docs` off by default, HTTPS-only cookies, and a [step-by-step Railway deployment](#deploying-to-railway)
-  that deploys `main` automatically when CI passes
+  check, `/docs` off by default, HTTPS-only cookies, and two step-by-step deployments that deploy `main`
+  automatically when CI passes: [free on Render + Neon](#free-deployment-render--neon) or
+  [paid on Railway](#deploying-to-railway)
 - **330+ automated tests**, run against both the in-memory storage and a real PostgreSQL database
 - **CI** on GitHub Actions: lint (ruff), formatting check, all tests, Docker build + production smoke test
 
@@ -132,7 +133,7 @@ All settings come from environment variables or `.env` (see `.env.example`). Onl
 | `SESSION_MAX_AGE_HOURS` | `8` | How long a dashboard login lasts |
 | `ENVIRONMENT` | `development` | `production` = refuse unsafe settings, `/docs` off, secure cookies, HSTS |
 | `DOCS_ENABLED` | *(on in development, off in production)* | Show `/docs`, `/redoc` and `/openapi.json` |
-| `CLIENT_IP_HEADER` | *(none)* | Header with the real client IP behind a trusted proxy (Railway: `X-Real-IP`). Leave empty locally: a client could fake it |
+| `CLIENT_IP_HEADER` | *(none)* | Header with the real client IP behind a trusted proxy (Render: `CF-Connecting-IP`, Railway: `X-Real-IP`). Leave empty locally: a client could fake it |
 | `RATE_LIMIT_API_PER_MINUTE` | `60` | Requests per minute per IP to the REST endpoints (`0` = no limit) |
 | `RATE_LIMIT_VAPI_PER_MINUTE` | `300` | Requests per minute per IP to `/vapi/...` |
 | `LOGIN_MAX_FAILURES` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Wrong admin logins allowed per IP, and how long that IP is then locked out |
@@ -500,9 +501,197 @@ it makes the cookie HTTPS-only and refuses to start without `SESSION_SECRET`. Af
 passwords from one IP address, logins from that address are blocked for `LOGIN_LOCKOUT_MINUTES` (15), even with
 the right password. The dashboard is also reachable through your ngrok address while ngrok runs.
 
+## Hosting options
+
+| | [Free: Render + Neon](#free-deployment-render--neon) | [Paid: Railway](#deploying-to-railway) |
+|---|---|---|
+| Cost | $0 | About $5/month (Hobby) |
+| Always on | Kept awake by a ping every 10 minutes | Yes |
+| Restarts | Render may restart free services at any time (about 1 minute offline) | Only when you deploy |
+| Database | Neon free: 1 GB, sleeps when idle (wakes in under a second) | Railway Postgres in the same project |
+| Migrations | At app startup | Pre-deploy command |
+| Good for | Portfolio, demos, test calls | A real shop's phone line |
+
+## Free deployment: Render + Neon
+
+The app runs on a [Render](https://render.com) **free web service**, the database on [Neon](https://neon.com)'s
+**free Postgres**, and [cron-job.org](https://cron-job.org) pings the app every 10 minutes so it doesn't fall asleep.
+
+```
+Caller ─> Vapi ─> https://voice-booking.onrender.com/vapi/...   ─┐
+You ─> https://voice-booking.onrender.com/admin                    ├─> Render free web service (Frankfurt)
+cron-job.org ─(every 10 min)─> /health/live                       ─┘        │
+                                                                           └─> Neon Postgres (Frankfurt)
+git push ─> GitHub Actions (CI) ─ passes ─> Render deploys main (migrations run at startup)
+```
+
+### Limits you should know about
+
+- **Render free service:**
+  - It sleeps after **15 minutes without requests**, and waking takes **about a minute**. That's longer than
+    Vapi's 20-second tool timeout, which is why the ping keeps it awake.
+  - There are **750 free hours per month per workspace**. Awake 24/7 uses up to 744 (31 days), so it fits,
+    but only for **one** free service. A second free web service in the same Render workspace would use up the
+    hours, and Render then suspends **all** free services until the next month.
+  - Render may **restart** it at any time, and each deploy restarts it. For about a minute, calls get failed
+    tool calls.
+  - It has 0.1 CPU and 512 MB RAM. It's enough for this app, but slower than your laptop.
+  - Render's docs say free instances are not meant for production.
+- **Neon free database:**
+  - It sleeps after 5 idle minutes and wakes in a few hundred milliseconds, so the first tool call after a
+    quiet period is a little slower.
+  - The limits per month are **100 compute hours** (400 hours at the smallest size) and 5 GB of data
+    transfer. At either limit the database is **suspended until next month** (no data is lost).
+  - That's why the ping and Render's health check use **`/health/live`, which never touches the database**:
+    Neon wakes only for real calls and dashboard visits.
+  - Storage is 1 GB, which is a lot for bookings and transcripts. Restores only go back 6 hours, so make your
+    own backups (below).
+- **The ping:** if cron-job.org misses a ping, Render can put the app to sleep, and the next call's first
+  tool call then fails while it wakes up.
+- **All free tiers can change.** Check the limits below now and then.
+
+### Step 1: Create the Neon database
+
+1. Go to https://neon.com → **Sign up** (GitHub login works). The free plan needs no credit card.
+2. Create a project:
+   - **Project name:** `voice-booking`
+   - **Postgres version:** the default
+   - **Region:** **AWS Europe Central 1 (Frankfurt)**, the same region as the Render service. Every tool call
+     makes a few database queries, so this matters.
+3. On the project dashboard click **Connect**. In the connection dialog:
+   - **Branch** `production` (or `main`), **database** `neondb`, **role** the default owner
+   - Turn **Connection pooling off**. The app has its own small connection pool, and Neon's pooler isn't needed
+     for one server.
+   - Copy the connection string. It looks like
+     `postgresql://neondb_owner:xxxx@ep-cool-name-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require`
+4. Keep it secret: it contains the database password. You paste it into Render in step 2.
+5. Optional, to protect the free compute hours: **Branches** → `production` → the compute → **Edit**, and set
+   the size to **0.25 CU** (min and max). That's enough for this app, and it can't scale up and use the hours
+   faster.
+
+You don't create any tables: the app runs the migrations itself when it starts.
+
+### Step 2: Create the Render service
+
+1. Go to https://render.com → **Get Started** → sign up with **GitHub** (the account that owns
+   `Marinst9/voice-booking`).
+2. In the dashboard click **New +** → **Blueprint**.
+3. **Connect GitHub**, and give Render access to **only** the `voice-booking` repository.
+4. Select `Marinst9/voice-booking`, branch `main`. Render finds `render.yaml` and shows one service:
+   `voice-booking` (Free, Frankfurt).
+5. Render asks for the two values marked as secret in `render.yaml`:
+   - **`DATABASE_URL`:** the Neon connection string from step 1
+   - **`VAPI_SECRET`:** the same value as in your Vapi Bearer Token credential (from your local `.env`, line
+     `VAPI_SECRET=`)
+6. Click **Deploy Blueprint** (or **Apply**). The first build takes a few minutes. In the service's **Logs** you
+   should see `Running upgrade -> 0001`, `0001 -> 0002`, and `app_started` with `"environment": "production"`.
+
+Everything else comes from `render.yaml`:
+
+| Setting | Value | Why |
+|---|---|---|
+| Instance type | Free | $0 |
+| Region | Frankfurt | Close to Neon's Frankfurt database |
+| Health check path | `/health/live` | Doesn't touch the database, so Neon can sleep |
+| Auto-deploy | **After CI checks pass** | A push to `main` deploys only when GitHub Actions passed |
+| Start command | `alembic upgrade head && exec uvicorn ...` | Migrations at startup (free services have no pre-deploy command) |
+| `ENVIRONMENT` | `production` | `/docs` off, HTTPS-only cookie, HSTS, refuses unsafe settings |
+| `CALENDAR_BACKEND` | `postgres` | Store everything in Neon |
+| `CLIENT_IP_HEADER` | `CF-Connecting-IP` | The real caller IP for rate limits (Render is behind Cloudflare, which sets it and rejects fakes) |
+| `ADMIN_USERNAME` | `admin` | Dashboard login |
+| `API_KEY`, `ADMIN_PASSWORD`, `SESSION_SECRET` | generated by Render | Random and strong; nothing secret is in git |
+| `DATABASE_URL`, `VAPI_SECRET` | pasted by you | Secrets |
+
+### Step 3: Get the URL and your passwords
+
+1. The URL is at the top of the service page, e.g. **`https://voice-booking.onrender.com`** (Render adds a
+   suffix like `voice-booking-ab12` if the name is taken). It's HTTPS automatically.
+2. **Environment** tab: click the eye icon to show **`ADMIN_PASSWORD`** and **`API_KEY`**. Save both in a
+   password manager.
+3. Check it, in PowerShell:
+   ```powershell
+   $base = "https://voice-booking.onrender.com"
+   Invoke-RestMethod "$base/health/live"      # status: ok (app is running)
+   Invoke-RestMethod "$base/health"           # database: ok (Neon wakes up for this one)
+   Invoke-RestMethod "$base/bookings" -Headers @{ "X-API-Key" = "<API_KEY>" }
+   ```
+4. Open `$base/admin` and log in with `admin` and the `ADMIN_PASSWORD`. `$base/docs` gives **404** in production
+   (set `DOCS_ENABLED=true` under Environment to show it temporarily).
+
+### Step 4: Keep it awake with cron-job.org
+
+1. Go to https://console.cron-job.org/signup and create a free account (confirm the email).
+2. **Cronjobs** → **Create cronjob**:
+   - **Title:** `voice-booking keep-alive`
+   - **URL:** `https://voice-booking.onrender.com/health/live` (**`/health/live`**, not `/health`, so Neon can
+     sleep)
+   - **Execution schedule:** **Every 10 minutes**. That's under Render's 15-minute limit, with room for one
+     late ping.
+   - **Notifications:** turn on **notify me when the job fails** (by email), so you hear about it when the app
+     is down.
+   - **Advanced** (if shown): request method `GET`, timeout 30 seconds
+3. **Create**. After a few runs, the job's **History** shows status `200 OK` every 10 minutes.
+
+Each ping is one tiny request: about 4,500 a month, well under Render's included bandwidth. In the app's logs they
+appear only at `DEBUG` level, so they don't flood the logs.
+
+### Step 5: Point Vapi at the Render URL
+
+Replace the ngrok address in five places. The paths stay the same:
+
+| Where in Vapi | New value |
+|---|---|
+| Tool `get_current_datetime` → Server URL | `https://voice-booking.onrender.com/vapi/tools` |
+| Tool `check_availability` → Server URL | `https://voice-booking.onrender.com/vapi/tools` |
+| Tool `create_booking` → Server URL | `https://voice-booking.onrender.com/vapi/tools` |
+| Tool `cancel_booking` → Server URL | `https://voice-booking.onrender.com/vapi/tools` |
+| Assistant → Advanced → Webhook Server → Server URL | `https://voice-booking.onrender.com/vapi/events` |
+
+Use your real Render URL if it has a suffix. Keep the same credential on all five (`VAPI_SECRET` is unchanged),
+**Publish** the assistant, and make a test call. The call then appears in `/admin/calls`. You can stop ngrok.
+
+### Deploying changes
+
+`git push`. GitHub Actions runs; if it passes, Render builds and deploys automatically (the service restarts,
+offline for about a minute). If CI fails, nothing is deployed. Render's **Events** tab shows each deploy.
+
+### Checking the free limits
+
+| What | Where |
+|---|---|
+| Render free hours used this month (max 750) | Render → your workspace → **Billing** (free usage) |
+| Neon compute hours (max 100) and data transfer (max 5 GB) | Neon → project → **Usage** (or **Monitoring**) |
+| Is the ping working? | cron-job.org → the job → **History** |
+
+If Neon's compute hours grow fast, something is querying the database all the time: check that the ping and
+the Render health check both use `/health/live`.
+
+### Backups (Neon)
+
+```powershell
+$url = "<the Neon connection string>"
+docker run --rm -v "${PWD}:/backup" postgres:18-alpine pg_dump $url -f /backup/neon-backup.sql
+```
+
+`neon-backup.sql` is gitignored (it contains customer data). Neon can only restore the last 6 hours on the free
+plan, so make a copy now and then.
+
+### When the free deployment doesn't work
+
+| You see | Likely cause |
+|---|---|
+| Deploy fails, logs show an Alembic or connection error | `DATABASE_URL` is wrong: copy it again from Neon's **Connect** dialog (pooling off), including `?sslmode=require` |
+| Logs say `ENVIRONMENT=production, but: ...` | A required variable is missing; the message says which |
+| Every page takes about a minute, then works | The app was asleep: check the cron-job.org job (URL, every 10 minutes, History) |
+| `/health` says `"database": "unreachable"` | Neon is suspended (monthly limit reached: Neon → Usage) or the connection string changed |
+| Render says the service is suspended | The 750 free hours are used up: is there another free web service in this Render workspace? |
+| Push to `main` doesn't deploy | CI failed (GitHub → Actions), or auto-deploy isn't set to "After CI checks pass" (Settings → Build & Deploy) |
+| `/admin` login always fails | Use the `ADMIN_PASSWORD` from Render's Environment tab, not your local one |
+
 ## Deploying to Railway
 
-This runs the app 24/7 on [Railway](https://railway.com), without your laptop or ngrok:
+The paid option (about $5/month on Hobby; see [Hosting options](#hosting-options)). This runs the app 24/7 on
+[Railway](https://railway.com), without your laptop or ngrok:
 
 ```
 Caller ─> Vapi ─> https://<your-app>.up.railway.app/vapi/...  ─┐
@@ -815,6 +1004,13 @@ See the results in the **Actions** tab of your GitHub repository.
 - **The client IP header is opt-in.** Behind Railway every request comes from Railway's proxy, so the real IP is
   read from `X-Real-IP`, which Railway's proxy sets. Locally that header is ignored, because anyone could send
   it and get around the limits.
+- **Two health checks.** `/health` checks the database (for deploys on Railway, and for you). `/health/live` only
+  says "the app is running" and never touches the database. Render's health check (every few seconds) and the
+  keep-alive ping use it, so Neon's free database can still sleep and save its 100 monthly compute hours.
+- **Migrations at startup on Render's free plan.** Free services have no pre-deploy command, so `render.yaml`
+  starts the app with `alembic upgrade head && exec uvicorn ...`. With nothing to migrate it takes about a
+  second; if a migration fails the app doesn't start and the deploy fails its health check. CI runs exactly this
+  command against an empty database on every push.
 - **Railway settings in the dashboard, not in a file.** Railway's `railway.json` is deprecated (it stops being read
   on 2026-12-01), and its replacement is applied with the Railway CLI, which needs Node.js. Five dashboard fields
   are simpler; the README lists them exactly, and the Dockerfile and CI hold everything else.
@@ -859,6 +1055,7 @@ migrations/            Alembic migrations
 tests/                 pytest tests (conftest.py has the shared fixtures)
 docker/postgres-init/  creates the booking_test database
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
+render.yaml            Render Blueprint for the free deployment (Railway is set up in its dashboard)
 ```
 
 ## Adding Google Calendar later
