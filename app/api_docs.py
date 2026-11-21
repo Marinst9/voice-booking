@@ -92,6 +92,14 @@ INVALID_INPUT = _response(
     },
 )
 
+UNAUTHORIZED = _response(
+    "The X-API-Key header is missing or wrong. Click **Authorize** at the top of this page.",
+    invalid_api_key=_error(
+        "Missing or wrong API key", "invalid_api_key",
+        "Missing or invalid API key. Send it in the X-API-Key header.",
+    ),
+)
+
 EXAMPLE_BOOKING = {
     "id": "3e9aee92",
     "customer_name": "Marko",
@@ -117,6 +125,7 @@ CHECK_AVAILABILITY_RESPONSES: dict[int | str, dict[str, Any]] = {
         "The day can't be booked or the service is unknown.",
         closed_day=CLOSED_DAY, date_in_past=DATE_IN_PAST, unknown_service=UNKNOWN_SERVICE,
     ),
+    401: UNAUTHORIZED,
     422: INVALID_INPUT,
 }
 
@@ -136,6 +145,7 @@ CREATE_BOOKING_RESPONSES: dict[int | str, dict[str, Any]] = {
         "Double booking: the time overlaps an existing booking. `suggested_times` has the nearest free times.",
         time_taken=TIME_TAKEN,
     ),
+    401: UNAUTHORIZED,
     422: INVALID_INPUT,
 }
 
@@ -146,6 +156,7 @@ CANCEL_BOOKING_RESPONSES: dict[int | str, dict[str, Any]] = {
         "booking": EXAMPLE_BOOKING,
     }),
     404: _response("No booking matches that phone number and start time.", booking_not_found=BOOKING_NOT_FOUND),
+    401: UNAUTHORIZED,
     422: INVALID_INPUT,
 }
 
@@ -153,4 +164,5 @@ LIST_BOOKINGS_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: _success("All bookings, sorted by start time.", {
         "success": True, "count": 1, "bookings": [EXAMPLE_BOOKING],
     }),
+    401: UNAUTHORIZED,
 }

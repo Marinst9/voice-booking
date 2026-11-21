@@ -14,7 +14,7 @@ from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 WEEKDAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # ----- Logging -----
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "text"] = "json"  # json for servers, text is easier to read locally
+
+    # ----- Security -----
+    # No default on purpose: the server refuses to start without one (see main.py).
+    # SecretStr hides the value if settings are ever printed or logged.
+    api_key: SecretStr | None = Field(None, min_length=16)
 
     # ----- Checks: fail at startup with a clear message instead of misbehaving later -----
 

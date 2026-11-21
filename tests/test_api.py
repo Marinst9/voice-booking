@@ -181,10 +181,10 @@ def test_docs_list_every_status_code(client):
         "/bookings": set(paths["/bookings"]["get"]["responses"]),
     }
     assert documented == {
-        "/check_availability": {"200", "400", "422"},
-        "/create_booking": {"200", "400", "409", "422"},
-        "/cancel_booking": {"200", "404", "422"},
-        "/bookings": {"200"},
+        "/check_availability": {"200", "400", "401", "422"},
+        "/create_booking": {"200", "400", "401", "409", "422"},
+        "/cancel_booking": {"200", "401", "404", "422"},
+        "/bookings": {"200", "401"},
     }
 
 

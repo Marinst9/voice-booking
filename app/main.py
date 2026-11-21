@@ -14,6 +14,7 @@ Interactive docs: http://127.0.0.1:8000/docs
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -21,10 +22,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app import api_docs
-from app.booking_service import BookingError, BookingService, say_day, say_time
+from app.booking_service import BookingService, say_day, say_time
 from app.calendars import Booking, InMemoryCalendar
 from app.config import get_settings
+from app.errors import AppError
 from app.logging_config import log_event, request_id_var, setup_logging
+from app.security import require_api_key
 from app.models import (
     AvailabilityResponse,
     BookingListResponse,
@@ -40,14 +43,31 @@ settings = get_settings()
 setup_logging(settings.log_level, settings.log_format)
 logger = logging.getLogger("app.api")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Runs once when the server starts (before `yield`) and stops (after)."""
+    if get_settings().api_key is None:
+        raise RuntimeError("API_KEY is not set. Copy .env.example to .env and set API_KEY.")
+    log_event(logger, logging.INFO, "app_started")
+    yield
+
+
 app = FastAPI(
     title="Barber Shop Booking API",
     description=(
-        "Backend for an AI voice booking assistant. Uses a fake in-memory calendar.\n\n"
+        "Backend for an AI voice booking assistant.\n\n"
         "Shop hours: Monday-Saturday 09:00-18:00 (Europe/Skopje), closed Sunday.\n\n"
+        "**Authentication:** every endpoint needs the `X-API-Key` header. "
+        "Click **Authorize** and paste your API key to try them here.\n\n"
         "Every response contains `success` and a `message` the voice agent can read to the caller. "
         "Errors also contain an `error` code and, where useful, `suggested_times`."
     ),
+    lifespan=lifespan,
+    # Applies to every route below. /docs and /openapi.json are not routes of ours, so they stay open.
+    dependencies=[Depends(require_api_key)],
+    # Remember the key you entered in /docs after a page reload.
+    swagger_ui_parameters={"persistAuthorization": True},
 )
 
 # ---- Which calendar to use ----
@@ -104,8 +124,8 @@ async def log_requests(request: Request, call_next):
 
 # ---- Error handling: always answer with a readable message ----
 
-@app.exception_handler(BookingError)
-def handle_booking_error(request: Request, error: BookingError) -> JSONResponse:
+@app.exception_handler(AppError)
+def handle_app_error(request: Request, error: AppError) -> JSONResponse:
     log_event(
         logger, logging.WARNING, "request_rejected",
         error=error.code, status_code=error.status_code, path=request.url.path,
