@@ -57,7 +57,7 @@ settings = get_settings()
 setup_logging(settings.log_level, settings.log_format)
 logger = logging.getLogger("app.api")
 # Requested over and over by health checks and the docs page itself: logged at DEBUG, not INFO.
-QUIET_PATHS = {"/health", "/docs", "/openapi.json", "/docs/oauth2-redirect", "/redoc"}
+QUIET_PATHS = {"/health", "/health/live", "/docs", "/openapi.json", "/docs/oauth2-redirect", "/redoc"}
 
 
 @asynccontextmanager
@@ -201,6 +201,23 @@ def health(
         logger.exception("health_check_failed")  # the details go to the logs, not to the caller
         return JSONResponse(status_code=503, content={"status": "error", "database": "unreachable"})
     return JSONResponse(content={"status": "ok", "database": "ok" if uses_database else "not_used"})
+
+
+class LiveResponse(BaseModel):
+    status: str = Field(examples=["ok"])
+
+
+@health_router.get(
+    "/health/live",
+    response_model=LiveResponse,
+    summary="Is the app process running? (no database check)",
+    description="No API key needed. Always 200 while the app runs, and it **never touches the database**. "
+    "Use it for frequent checks: the platform's health check and the keep-alive ping. A serverless database "
+    "like Neon then can still go to sleep between real requests, which saves its free compute hours. "
+    "Use `/health` to also check the database.",
+)
+def health_live() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 # ---- Booking endpoints ----

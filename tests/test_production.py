@@ -157,6 +157,28 @@ def test_health_is_503_when_the_database_is_down(client, booking_service, monkey
     assert "db.internal" not in response.text  # details only in the logs
 
 
+def test_health_live_never_touches_the_database(client, booking_service, monkeypatch):
+    """The keep-alive ping hits this every few minutes; it must let Neon's database sleep."""
+
+    def must_not_be_called():
+        raise AssertionError("/health/live used the database")
+
+    monkeypatch.setattr(booking_service, "check_health", must_not_be_called)
+    monkeypatch.setattr(booking_service.calendar, "list_bookings", must_not_be_called)
+    response = client.get("/health/live", headers={"X-API-Key": ""})
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_health_live_works_in_production(prod_client):
+    assert prod_client.get("/health/live").status_code == 200
+
+
+def test_health_live_is_not_rate_limited(client, test_settings):
+    test_settings.rate_limit_api_per_minute = 1
+    assert all(client.get("/health/live").status_code == 200 for _ in range(5))
+
+
 # ---------- The limiter itself ----------
 
 
