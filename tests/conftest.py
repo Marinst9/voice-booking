@@ -27,6 +27,7 @@ from app.main import app, get_booking_service
 
 FAKE_NOW = datetime(2026, 11, 22, 12, 0, tzinfo=TIMEZONE)  # a Sunday
 TEST_API_KEY = "test-api-key-0123456789"
+TEST_VAPI_SECRET = "test-vapi-secret-0123456789"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -77,7 +78,7 @@ def calendar(request) -> CalendarBackend:
 @pytest.fixture
 def test_settings() -> Settings:
     # _env_file=None: ignore any real .env on this computer, so tests behave the same everywhere.
-    return Settings(_env_file=None, api_key=TEST_API_KEY)
+    return Settings(_env_file=None, api_key=TEST_API_KEY, vapi_secret=TEST_VAPI_SECRET)
 
 
 @pytest.fixture

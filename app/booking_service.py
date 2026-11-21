@@ -51,6 +51,22 @@ def say_list(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
+def booked_message(booking: Booking) -> str:
+    """'You're booked, Marko! Haircut on Monday 23 November at 14:00.'"""
+    return (
+        f"You're booked, {booking.customer_name}! {booking.service_name} on "
+        f"{say_day(booking.start.date())} at {say_time(booking.start)}."
+    )
+
+
+def cancelled_message(booking: Booking) -> str:
+    """'Your Haircut on Monday 23 November at 14:00 has been cancelled.'"""
+    return (
+        f"Your {booking.service_name} on {say_day(booking.start.date())} "
+        f"at {say_time(booking.start)} has been cancelled."
+    )
+
+
 def opening_hours_sentence() -> str:
     """'We're open Monday to Saturday, 09:00 to 18:00.' built from config.py."""
     day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

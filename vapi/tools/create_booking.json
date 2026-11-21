@@ -1,0 +1,41 @@
+{
+  "type": "function",
+  "async": false,
+  "function": {
+    "name": "create_booking",
+    "description": "Book an appointment. Only call this after the caller has clearly confirmed the service, date, time, their name and their phone number. If the result has success false, tell the caller the message and offer the suggested_times.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "customer_name": {
+          "type": "string",
+          "description": "The caller's name, for example Marko."
+        },
+        "phone": {
+          "type": "string",
+          "description": "The caller's phone number with all digits, for example +38970123456 or 070123456."
+        },
+        "service": {
+          "type": "string",
+          "enum": ["Haircut", "Beard trim", "Haircut + Beard"],
+          "description": "The service the caller confirmed."
+        },
+        "start_time": {
+          "type": "string",
+          "description": "Start time in Skopje local time, format YYYY-MM-DDTHH:MM, for example 2026-11-23T14:00. Must be one of the free times from check_availability."
+        }
+      },
+      "required": ["customer_name", "phone", "service", "start_time"]
+    }
+  },
+  "messages": [
+    {
+      "type": "request-start",
+      "content": "One moment, I'm booking that for you."
+    }
+  ],
+  "server": {
+    "url": "https://YOUR-NGROK-DOMAIN/vapi/tools",
+    "timeoutSeconds": 20
+  }
+}

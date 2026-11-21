@@ -16,16 +16,18 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app import api_docs
-from app.booking_service import BookingService, say_day, say_time
-from app.calendars import Booking, create_calendar
+from app.booking_service import BookingService, booked_message, cancelled_message
+from app.calendars import create_calendar
 from app.config import get_settings
-from app.errors import AppError
+from app.dependencies import get_booking_service
+from app.errors import AppError, invalid_input_message
+from app.integrations import vapi
 from app.logging_config import log_event, request_id_var, setup_logging
 from app.models import (
     AvailabilityResponse,
@@ -67,35 +69,20 @@ app = FastAPI(
     description=(
         "Backend for an AI voice booking assistant.\n\n"
         "Shop hours: Monday-Saturday 09:00-18:00 (Europe/Skopje), closed Sunday.\n\n"
-        "**Authentication:** every endpoint needs the `X-API-Key` header. "
-        "Click **Authorize** and paste your API key to try them here.\n\n"
+        "**Authentication:** the booking endpoints need the `X-API-Key` header. "
+        "Click **Authorize** and paste your API key to try them here. "
+        "`/vapi/tools` instead checks the secret Vapi sends (`VAPI_SECRET`).\n\n"
         "Every response contains `success` and a `message` the voice agent can read to the caller. "
         "Errors also contain an `error` code and, where useful, `suggested_times`."
     ),
     lifespan=lifespan,
-    # Applies to every route below. /docs and /openapi.json are not routes of ours, so they stay open.
-    dependencies=[Depends(require_api_key)],
     # Remember the key you entered in /docs after a page reload.
     swagger_ui_parameters={"persistAuthorization": True},
 )
 
-
-def get_booking_service(request: Request) -> BookingService:
-    """FastAPI 'dependency': gives each endpoint the booking service made at startup (tests swap it out)."""
-    return request.app.state.booking_service
-
-
-def booking_to_out(booking: Booking) -> BookingOut:
-    return BookingOut(
-        id=booking.id,
-        customer_name=booking.customer_name,
-        phone=booking.phone,
-        service=booking.service_name,
-        start_time=booking.start,
-        end_time=booking.end,
-        status=booking.status.value,
-        created_at=booking.created_at,
-    )
+# The booking endpoints all require X-API-Key. /docs and /openapi.json are not on this router, so they stay open.
+# The Vapi webhook (app/integrations/vapi.py) has its own router with its own secret check.
+api = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 # ---- Request logging: one log line per request, with a request id ----
@@ -159,8 +146,7 @@ def handle_bad_input(request: Request, error: RequestValidationError) -> JSONRes
     log_event(logger, logging.WARNING, "invalid_input", fields=fields, path=request.url.path)
     body = ErrorResponse(
         error="invalid_input",
-        message=f"Sorry, something was missing or unclear: {', '.join(fields)}. "
-        "Dates must look like 2026-11-23 and times like 2026-11-23T14:00.",
+        message=invalid_input_message(fields),
         details=jsonable_encoder(error.errors()),
     )
     return JSONResponse(status_code=422, content=body.model_dump())
@@ -169,7 +155,7 @@ def handle_bad_input(request: Request, error: RequestValidationError) -> JSONRes
 # ---- Endpoints ----
 
 
-@app.post(
+@api.post(
     "/check_availability",
     response_model=AvailabilityResponse,
     responses=api_docs.CHECK_AVAILABILITY_RESPONSES,
@@ -183,7 +169,7 @@ def check_availability(body: CheckAvailabilityRequest, service: BookingService =
     return AvailabilityResponse(**result)
 
 
-@app.post(
+@api.post(
     "/create_booking",
     response_model=BookingResponse,
     responses=api_docs.CREATE_BOOKING_RESPONSES,
@@ -194,14 +180,10 @@ def check_availability(body: CheckAvailabilityRequest, service: BookingService =
 )
 def create_booking(body: CreateBookingRequest, service: BookingService = Depends(get_booking_service)):
     booking = service.create_booking(body.customer_name, body.phone, body.service, body.start_time)
-    return BookingResponse(
-        message=f"You're booked, {booking.customer_name}! {booking.service_name} on "
-        f"{say_day(booking.start.date())} at {say_time(booking.start)}.",
-        booking=booking_to_out(booking),
-    )
+    return BookingResponse(message=booked_message(booking), booking=BookingOut.from_booking(booking))
 
 
-@app.post(
+@api.post(
     "/cancel_booking",
     response_model=BookingResponse,
     responses=api_docs.CANCEL_BOOKING_RESPONSES,
@@ -211,14 +193,10 @@ def create_booking(body: CreateBookingRequest, service: BookingService = Depends
 )
 def cancel_booking(body: CancelBookingRequest, service: BookingService = Depends(get_booking_service)):
     booking = service.cancel_booking(body.phone, body.start_time)
-    return BookingResponse(
-        message=f"Your {booking.service_name} on {say_day(booking.start.date())} "
-        f"at {say_time(booking.start)} has been cancelled.",
-        booking=booking_to_out(booking),
-    )
+    return BookingResponse(message=cancelled_message(booking), booking=BookingOut.from_booking(booking))
 
 
-@app.get(
+@api.get(
     "/bookings",
     response_model=BookingListResponse,
     responses=api_docs.LIST_BOOKINGS_RESPONSES,
@@ -228,4 +206,10 @@ def cancel_booking(body: CancelBookingRequest, service: BookingService = Depends
 )
 def list_bookings(include_cancelled: bool = False, service: BookingService = Depends(get_booking_service)):
     bookings = service.all_bookings(include_cancelled=include_cancelled)
-    return BookingListResponse(count=len(bookings), bookings=[booking_to_out(b) for b in bookings])
+    return BookingListResponse(count=len(bookings), bookings=[BookingOut.from_booking(b) for b in bookings])
+
+
+app.include_router(api)
+app.include_router(vapi.router)
+
+__all__ = ["app", "get_booking_service", "lifespan"]  # get_booking_service: tests override it

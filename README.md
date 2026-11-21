@@ -9,6 +9,8 @@ can read straight to the caller.
 
 ## Features
 
+- **Vapi voice assistant integration**: a webhook adapter (`/vapi/tools`), ready-to-paste tool definitions
+  and a receptionist system prompt in `vapi/`
 - **4 endpoints**: check availability, create booking, cancel booking, list bookings
 - **Booking rules**: opening hours (Mon–Sat 09:00–18:00, Europe/Skopje), no double bookings, no past bookings
 - **Caller-friendly errors**: *"Sorry, that time is already taken. The nearest free times are 13:30 and 14:30."*
@@ -18,17 +20,19 @@ can read straight to the caller.
 - **API key security** (`X-API-Key` header) with an **Authorize** button in the interactive docs
 - **Structured JSON logs** for every request, booking, cancellation and error, with a request id
 - **Docker Compose**: one command starts the database, runs migrations and starts the API
-- **106 automated tests**, run against both the in-memory calendar and a real PostgreSQL database
+- **150+ automated tests**, run against both the in-memory calendar and a real PostgreSQL database
 - **CI** on GitHub Actions: lint (ruff), formatting check, all tests, Docker build
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    caller([Caller]) --> agent[Voice AI agent]
-    agent -- "HTTP + X-API-Key" --> api
+    caller([Caller]) --> vapicloud["Vapi<br/>speech + LLM"]
+    vapicloud -- "tool-calls webhook<br/>Bearer VAPI_SECRET<br/>(via ngrok)" --> adapter
+    owner([You / other clients]) -- "HTTP + X-API-Key" --> api
 
     subgraph app ["FastAPI app (app/)"]
+        adapter["integrations/vapi.py<br/>Vapi format ⇄ booking service"] --> svc
         api["main.py<br/>endpoints, API key, logging, errors"] --> svc["booking_service.py<br/>booking rules + spoken messages"]
         svc --> contract{{"CalendarBackend<br/>calendars/base.py"}}
         contract --> mem["InMemoryCalendar<br/>tests, quick runs"]
@@ -45,7 +49,8 @@ Each layer has one job and only talks to the layer below it:
 | Layer | File(s) | Job |
 |---|---|---|
 | API | `app/main.py`, `app/models.py`, `app/api_docs.py` | HTTP, JSON shapes, `/docs`, error → JSON |
-| Security | `app/security.py` | Checks the `X-API-Key` header |
+| Integrations | `app/integrations/vapi.py` | Translates Vapi tool calls to the booking service and back |
+| Security | `app/security.py` | Checks `X-API-Key` (REST) and the Vapi credential (`/vapi/tools`) |
 | Rules | `app/booking_service.py` | Opening hours, overlaps, suggestions, spoken sentences |
 | Storage contract | `app/calendars/base.py` | *What* any calendar must do |
 | Storage | `app/calendars/memory.py`, `app/calendars/postgres.py` | *How* bookings are stored |
@@ -102,6 +107,7 @@ All settings come from environment variables or `.env` (see `.env.example`). Onl
 | Variable | Default | Meaning |
 |---|---|---|
 | `API_KEY` | *(none, required)* | Secret clients send in `X-API-Key`. At least 16 characters. |
+| `VAPI_SECRET` | *(none)* | Secret Vapi sends to `/vapi/tools`. Without it, that endpoint rejects everything. |
 | `CALENDAR_BACKEND` | `memory` | `memory` or `postgres` (Docker Compose always uses `postgres`) |
 | `DATABASE_URL` | – | e.g. `postgresql+psycopg://booking:booking@127.0.0.1:5432/booking` |
 | `SHOP_TIMEZONE` | `Europe/Skopje` | Timezone for all times |
@@ -199,11 +205,175 @@ Error (HTTP 409):
 | Status | `error` codes |
 |---|---|
 | 400 | `closed_day`, `outside_hours`, `date_in_past`, `time_in_past`, `unknown_service`, `invalid_phone`, `invalid_name` |
-| 401 | `invalid_api_key` |
+| 401 | `invalid_api_key`, `invalid_vapi_secret` (on `/vapi/tools`) |
 | 404 | `booking_not_found` |
 | 409 | `time_taken` |
 | 422 | `invalid_input` (missing field, bad date format, ...) |
 | 500 | `internal_error` (details only in the logs) |
+
+## Connecting a Vapi voice assistant
+
+[Vapi](https://vapi.ai) handles the phone side (speech-to-text, the AI model, text-to-speech). When the assistant
+needs the calendar, Vapi calls **`POST /vapi/tools`** on this backend. During development, **ngrok** gives your
+computer a public HTTPS address that Vapi can reach.
+
+```
+Caller ──> Vapi ──(tool-calls webhook)──> https://xxxx.ngrok-free.app/vapi/tools ──> ngrok ──> your PC :8000
+```
+
+What's in `vapi/`:
+
+| File | What it is |
+|---|---|
+| `vapi/tools/get_current_datetime.json` | Today's date and time in Skopje, plus the next 14 days with weekdays and opening hours |
+| `vapi/tools/check_availability.json` | Free start times for a service on a day |
+| `vapi/tools/create_booking.json` | Books an appointment |
+| `vapi/tools/cancel_booking.json` | Cancels an appointment |
+| `vapi/system-prompt.md` | The assistant's instructions: a friendly receptionist |
+
+### Step 1: Set the Vapi secret and start the backend
+
+1. Generate a secret:
+   ```powershell
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+2. Put it in `.env` as `VAPI_SECRET=...`. Keep this window open, you'll paste the same value into Vapi in step 3.
+3. Start (or restart) the backend so it reads the new setting:
+   ```powershell
+   docker compose up -d --build
+   ```
+
+### Step 2: Start ngrok on port 8000
+
+1. Create a free account at [ngrok.com](https://ngrok.com) and copy your **authtoken** from the ngrok dashboard
+   (*Getting Started → Your Authtoken*).
+2. Install ngrok, then **close and reopen PowerShell** so the `ngrok` command is found:
+   ```powershell
+   winget install ngrok.ngrok
+   ```
+3. Connect it to your account (once):
+   ```powershell
+   ngrok config add-authtoken YOUR-AUTHTOKEN
+   ```
+4. Start the tunnel and **leave this window open**:
+   ```powershell
+   ngrok http 8000
+   ```
+   Copy the `Forwarding` address, e.g. `https://abcd-1234.ngrok-free.app`. Your tool URL is that address plus
+   `/vapi/tools`.
+5. Check it: open `https://abcd-1234.ngrok-free.app/docs` in your browser. On the free plan ngrok first shows a
+   warning page; click **Visit Site**. Vapi's requests skip that page.
+
+**Tip:** on the free plan, the address changes every time you restart ngrok, and then you'd have to update all
+four tools. Instead, claim your free static domain in the ngrok dashboard (*Domains*) and always start with:
+```powershell
+ngrok http --url=your-name.ngrok-free.app 8000
+```
+
+**Tip:** open **http://127.0.0.1:4040** while ngrok runs. It shows every request Vapi sends and your server's
+answer, which is the easiest way to debug.
+
+### Step 3: Create the credential in Vapi
+
+This is how Vapi proves to your backend that a request really comes from your assistant.
+
+1. Sign up at [dashboard.vapi.ai](https://dashboard.vapi.ai).
+2. Find **Custom Credentials** (under *Integrations → Server Configuration*; Vapi moves menu items around
+   sometimes) and create a new one:
+   - **Type:** Bearer Token
+   - **Name:** e.g. `Barber backend`
+   - **Token:** the `VAPI_SECRET` value from your `.env`
+   - Keep the header as `Authorization` with the **Bearer prefix** on (the default).
+3. Save it.
+
+The backend also accepts the legacy style (header name `X-Vapi-Secret`, Bearer prefix off), if you prefer that.
+
+### Step 4: Add the four tools
+
+In the dashboard, go to **Tools → Create Tool** and choose a **Custom Tool / Function**. Create one tool per file in
+`vapi/tools/`, copying the values from the JSON:
+
+| Dashboard field | Take it from the JSON |
+|---|---|
+| Tool name | `function.name` (must match exactly, e.g. `check_availability`) |
+| Description | `function.description` |
+| Parameters | `function.parameters` (paste the JSON object, or add each property with the same name, type, description and enum) |
+| Server URL | `https://YOUR-NGROK-DOMAIN/vapi/tools` (replace the placeholder with your ngrok address) |
+| Credential | the credential from step 3 |
+| Timeout | 20 seconds |
+| Messages → Request Start | the `content` of the `request-start` message (leave empty for `get_current_datetime`) |
+
+<details>
+<summary>Optional: create the tools with the Vapi API instead of clicking</summary>
+
+This posts the JSON files directly. You need your **private API key** (dashboard → *API Keys*) and the
+**credential id** (shown on the credential from step 3). This snippet hasn't been run against a live Vapi account,
+so check the tools in the dashboard afterwards.
+
+```powershell
+$vapiKey      = "your-vapi-private-api-key"
+$serverUrl    = "https://your-name.ngrok-free.app/vapi/tools"
+$credentialId = "your-credential-id"
+
+Get-ChildItem vapi\tools\*.json | ForEach-Object {
+    $tool = Get-Content $_.FullName -Raw | ConvertFrom-Json
+    $tool.server.url = $serverUrl
+    $tool.server | Add-Member -NotePropertyName credentialId -NotePropertyValue $credentialId
+    Invoke-RestMethod -Method Post "https://api.vapi.ai/tool" -ContentType "application/json" `
+        -Headers @{ Authorization = "Bearer $vapiKey" } -Body ($tool | ConvertTo-Json -Depth 20)
+}
+```
+</details>
+
+### Step 5: Create the assistant
+
+1. Go to **Assistants → Create Assistant** and start from the **Blank** template. Name it e.g. `Barber receptionist`.
+2. **Model:** choose a model that's good at tool use (for example a current GPT, Claude or Gemini model).
+3. **First message:**
+   `Hi, thanks for calling! I can help you book or cancel an appointment. What can I do for you?`
+4. **System prompt:** paste the whole content of `vapi/system-prompt.md`. Add your shop's name in the first line
+   if you like.
+5. **Tools:** add all four tools from step 4.
+6. Leave voice and transcriber on the defaults for a first test, then **Publish / Save**.
+
+### Step 6: Make a test call from the browser
+
+1. Make sure three things are running: the backend (`docker compose ps`), ngrok, and nothing else on port 8000.
+2. In a second PowerShell window, watch the logs:
+   ```powershell
+   docker compose logs -f api
+   ```
+3. In the Vapi dashboard, open your assistant and click **Talk to Assistant** (allow microphone access).
+4. Try a conversation like this:
+   - "Hi, I'd like a haircut tomorrow afternoon." (Tomorrow must be an open day. Try "on Monday" if tomorrow is Sunday.)
+   - Pick one of the offered times, give a name and a phone number, and say "yes" to the confirmation.
+   - Call again, ask for the same time, and listen to it offer `suggested_times`.
+   - "I'd like to cancel my appointment."
+5. Check the result: http://127.0.0.1:8000/docs → **Authorize** with your `API_KEY` → `GET /bookings`.
+
+In the logs you'll see one `vapi_tool_call` line per tool call, with the tool name, the outcome and Vapi's call id.
+
+### When something doesn't work
+
+Open http://127.0.0.1:4040 (ngrok's inspector) and look at the request Vapi sent:
+
+| You see | Likely cause |
+|---|---|
+| No request at all | Wrong Server URL on the tool, or ngrok isn't running / its address changed |
+| `401` with `invalid_vapi_secret` | The credential token doesn't match `VAPI_SECRET`, no credential is selected on the tool, or the backend wasn't restarted after editing `.env` |
+| `200` with `"error": "Unknown tool ..."` | The tool name in Vapi doesn't exactly match the file name (e.g. `check_availability`) |
+| `502` / `ERR_NGROK_8012` | ngrok works but the backend isn't running on port 8000 |
+| The assistant invents times | Check the tools are attached to the assistant and the system prompt is pasted |
+
+Vapi only sends your credential for **saved** tools and assistants (created in the dashboard or with the API),
+not for assistants passed inline when starting a call. That's another possible cause of a `401`.
+
+### How the adapter answers
+
+Vapi requires HTTP 200 with `{"results": [{"toolCallId": ..., "name": ..., "result": "<single-line string>"}]}`.
+`result` is the same JSON the REST endpoints return, compacted to one line, so the assistant gets `success`,
+`message`, `free_times`, `suggested_times`, and so on. Booking outcomes like "time taken" are normal results the
+assistant should read to the caller. Only real failures (unknown tool, server crash) use Vapi's `error` field.
 
 ## Database and migrations
 
@@ -276,6 +446,12 @@ See the results in the **Actions** tab of your GitHub repository.
   calendar follows the same rule, so tests behave like production.
 - **Cancel = mark as cancelled.** Rows are never deleted, which keeps a history; the constraint only applies to
   confirmed bookings, so a cancelled slot can be booked again.
+- **Vapi as a thin adapter.** `app/integrations/vapi.py` only translates formats and calls the same
+  `BookingService`, so the voice assistant and the REST API can never follow different rules. It has its own
+  secret (`VAPI_SECRET`), so it can be changed without touching `API_KEY`.
+- **`get_current_datetime` returns a 14-day list.** Language models are unreliable at calendar maths. Instead of
+  having the model work out "next Monday", it looks the date up in `upcoming_days`, which already says whether
+  the shop is open that day.
 - **API key instead of user logins.** The only client is a voice platform (machine to machine), so one secret key
   in a header is simple and enough. It's compared in constant time, and the server won't start without one.
 
@@ -287,14 +463,18 @@ app/
   models.py            request/response JSON shapes
   api_docs.py          example responses for /docs
   booking_service.py   booking rules and spoken messages
-  security.py          X-API-Key check
+  security.py          X-API-Key and Vapi credential checks
+  dependencies.py      shared FastAPI dependencies
   errors.py            AppError -> friendly JSON
+  integrations/
+    vapi.py            Vapi tool-call webhook adapter
   config.py            settings from environment variables
   logging_config.py    structured JSON logging
   calendars/
     base.py            the calendar contract
     memory.py          in-memory calendar
     postgres.py        PostgreSQL calendar + table definition
+vapi/                  Vapi tool definitions (tools/*.json) and the assistant's system prompt
 migrations/            Alembic migrations
 tests/                 pytest tests (conftest.py has the shared fixtures)
 docker/postgres-init/  creates the booking_test database

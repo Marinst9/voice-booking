@@ -1,0 +1,18 @@
+{
+  "type": "function",
+  "async": false,
+  "function": {
+    "name": "get_current_datetime",
+    "description": "Get today's date and the current time in Skopje, plus the next 14 days with their weekday names and whether the shop is open. Call this at the start of every conversation and whenever the caller uses a relative date like today, tomorrow, Friday or next week. Look the date up in upcoming_days instead of calculating it.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  "messages": [],
+  "server": {
+    "url": "https://YOUR-NGROK-DOMAIN/vapi/tools",
+    "timeoutSeconds": 20
+  }
+}

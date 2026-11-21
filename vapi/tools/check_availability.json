@@ -1,0 +1,33 @@
+{
+  "type": "function",
+  "async": false,
+  "function": {
+    "name": "check_availability",
+    "description": "Get the free start times for one service on one day. Always call this before offering a time. Only offer times from free_times; never guess availability.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "description": "The day in YYYY-MM-DD format, for example 2026-11-23. Use get_current_datetime to turn words like tomorrow or next Monday into a date."
+        },
+        "service": {
+          "type": "string",
+          "enum": ["Haircut", "Beard trim", "Haircut + Beard"],
+          "description": "Haircut takes 30 minutes, Beard trim 20 minutes, Haircut + Beard 50 minutes."
+        }
+      },
+      "required": ["date", "service"]
+    }
+  },
+  "messages": [
+    {
+      "type": "request-start",
+      "content": "Let me check the calendar."
+    }
+  ],
+  "server": {
+    "url": "https://YOUR-NGROK-DOMAIN/vapi/tools",
+    "timeoutSeconds": 20
+  }
+}

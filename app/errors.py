@@ -6,6 +6,14 @@ converts it into {"success": false, "error": ..., "message": ...}.
 """
 
 
+def invalid_input_message(fields: list[str]) -> str:
+    """The sentence used when a request is missing a field or has a badly formatted one."""
+    return (
+        f"Sorry, something was missing or unclear: {', '.join(fields)}. "
+        "Dates must look like 2026-11-23 and times like 2026-11-23T14:00."
+    )
+
+
 class AppError(Exception):
     """
     A problem we want to explain to the caller.

@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.calendars import Booking
+
 # ======================= Requests (what the agent sends) =======================
 
 
@@ -54,6 +56,20 @@ class BookingOut(BaseModel):
     end_time: datetime = Field(examples=["2026-11-23T14:30:00+01:00"])
     status: Literal["confirmed", "cancelled"] = Field(examples=["confirmed"])
     created_at: datetime | None = Field(description="When the booking was made", examples=["2026-11-21T18:05:12+01:00"])
+
+    @classmethod
+    def from_booking(cls, booking: Booking) -> "BookingOut":
+        """Convert the internal Booking into the JSON shape we send out."""
+        return cls(
+            id=booking.id,
+            customer_name=booking.customer_name,
+            phone=booking.phone,
+            service=booking.service_name,
+            start_time=booking.start,
+            end_time=booking.end,
+            status=booking.status.value,
+            created_at=booking.created_at,
+        )
 
 
 class AvailabilityResponse(BaseModel):

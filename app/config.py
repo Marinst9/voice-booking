@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # No default on purpose: the server refuses to start without one (see main.py).
     # SecretStr hides the value if settings are ever printed or logged.
     api_key: SecretStr | None = Field(None, min_length=16)
+    # The token Vapi sends with every tool call (set the same value in a Vapi "Bearer Token" credential).
+    # Optional: without it, /vapi/tools rejects every request.
+    vapi_secret: SecretStr | None = Field(None, min_length=16)
 
     # ----- Checks: fail at startup with a clear message instead of misbehaving later -----
 

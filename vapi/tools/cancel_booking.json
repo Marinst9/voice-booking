@@ -1,0 +1,32 @@
+{
+  "type": "function",
+  "async": false,
+  "function": {
+    "name": "cancel_booking",
+    "description": "Cancel an existing appointment, found by the phone number it was booked with and its start time. Only call this after the caller has confirmed which appointment to cancel.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "phone": {
+          "type": "string",
+          "description": "The phone number the appointment was booked with, all digits."
+        },
+        "start_time": {
+          "type": "string",
+          "description": "Start time of the appointment in Skopje local time, format YYYY-MM-DDTHH:MM, for example 2026-11-23T14:00."
+        }
+      },
+      "required": ["phone", "start_time"]
+    }
+  },
+  "messages": [
+    {
+      "type": "request-start",
+      "content": "One moment please."
+    }
+  ],
+  "server": {
+    "url": "https://YOUR-NGROK-DOMAIN/vapi/tools",
+    "timeoutSeconds": 20
+  }
+}
