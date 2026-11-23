@@ -4,7 +4,7 @@ Checks on the deployment files, so a typo there fails CI instead of a deploy.
 render.yaml: the free Render deployment. (Railway is configured in its dashboard, see README.)
 """
 
-import shlex
+import json
 from pathlib import Path
 
 import yaml
@@ -35,17 +35,34 @@ def test_render_health_check_exists_and_does_not_use_the_database(client):
     assert client.get(path, headers={"X-API-Key": ""}).status_code == 200
 
 
-def test_render_start_command_runs_migrations_then_the_app():
-    argv = shlex.split(render_service()["dockerCommand"])
+def dockerfile_cmd() -> list[str]:
+    [line] = [x for x in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines() if x.startswith("CMD ")]
+    return json.loads(line.removeprefix("CMD "))
+
+
+def test_render_uses_the_dockerfile_cmd():
+    # Render passes a dockerCommand to the shell with its quotes still on, so `sh -c "a && b"` fails
+    # with "not found". The start command lives in the Dockerfile's CMD (exec form) instead.
+    assert "dockerCommand" not in render_service()
+
+
+def test_dockerfile_cmd_runs_migrations_only_when_asked_then_the_app():
+    argv = dockerfile_cmd()
     assert argv[:2] == ["sh", "-c"]
     script = argv[2]
-    assert script.startswith("alembic upgrade head && exec uvicorn app.main:app")
-    assert "--port ${PORT" in script  # Render tells the app its port
+    assert 'if [ "${RUN_MIGRATIONS:-false}" = true ]; then alembic upgrade head || exit 1; fi;' in script
+    assert script.endswith("exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log")
+    by_key = {v["key"]: v for v in render_service()["envVars"]}
+    assert by_key["RUN_MIGRATIONS"]["value"] == "true"  # Render's free plan has no pre-deploy command
+
+
+# Read by the Dockerfile's CMD, not by the app.
+CONTAINER_ONLY_VARS = {"RUN_MIGRATIONS"}
 
 
 def test_render_env_vars_are_real_settings():
     env_vars = render_service()["envVars"]
-    known = {name.upper() for name in Settings.model_fields}
+    known = {name.upper() for name in Settings.model_fields} | CONTAINER_ONLY_VARS
     assert {v["key"] for v in env_vars} <= known
     by_key = {v["key"]: v for v in env_vars}
     assert by_key["ENVIRONMENT"]["value"] == "production"
@@ -57,7 +74,11 @@ def test_render_env_vars_are_real_settings():
 
 def test_render_settings_would_pass_the_production_checks():
     """The values Render ends up with must satisfy ENVIRONMENT=production's startup checks."""
-    values = {v["key"].lower(): v["value"] for v in render_service()["envVars"] if "value" in v}
+    values = {
+        v["key"].lower(): v["value"]
+        for v in render_service()["envVars"]
+        if "value" in v and v["key"] not in CONTAINER_ONLY_VARS
+    }
     generated = "A" * 44  # Render generates base64 values of 256 bits = 44 characters
     Settings(
         _env_file=None,

@@ -25,6 +25,9 @@ EXPOSE 8000
 # PORT: hosting platforms like Railway tell the app which port to listen on; locally it's 8000.
 # `exec` makes uvicorn the main process, so it receives the platform's stop signal and shuts down cleanly.
 # --no-access-log: our own middleware already logs every request (as JSON).
-# Migrations are NOT run here: Docker Compose runs them in the `migrate` service, Railway in its
-# pre-deploy command (see README "Deploying to Railway").
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]
+# Migrations: by default NOT run here: Docker Compose runs them in the `migrate` service, Railway in its
+# pre-deploy command (see README "Deploying to Railway"). RUN_MIGRATIONS=true runs them first (Render's free
+# plan has no pre-deploy command, so render.yaml sets it); if a migration fails, the app doesn't start.
+# The start command lives here, not in render.yaml's dockerCommand: Render passes that string to the shell
+# with its quotes still on, so `sh -c "a && b"` fails with "not found".
+CMD ["sh", "-c", "if [ \"${RUN_MIGRATIONS:-false}\" = true ]; then alembic upgrade head || exit 1; fi; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

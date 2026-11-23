@@ -100,23 +100,16 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/docs)" = "404"
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/bookings)" = "401"
           echo "Production image works."
-      - name: Start the image with Render's start command (migrations at startup) on an empty database
+      # Like Render: the image's own CMD (no command override) with RUN_MIGRATIONS=true from render.yaml.
+      - name: Start the image like Render (migrations at startup) on an empty database
         run: |
           docker run --rm --network host -e PGPASSWORD=booking postgres:17-alpine \
             psql -h 127.0.0.1 -U booking -d booking -c "CREATE DATABASE render_check"
-          pip install pyyaml
-          python3 - <<'EOF'
-          import shlex, subprocess, yaml
-          command = yaml.safe_load(open("render.yaml"))["services"][0]["dockerCommand"]
-          subprocess.run(
-              ["docker", "run", "-d", "--name", "render-api", "--network", "host",
-               "-e", "DATABASE_URL=postgresql://booking:booking@127.0.0.1:5432/render_check",
-               "-e", "ENVIRONMENT=production", "-e", "CALENDAR_BACKEND=postgres", "-e", "PORT=8090",
-               "-e", "API_KEY=ci-api-key-0123456789", "-e", "CLIENT_IP_HEADER=CF-Connecting-IP",
-               "voice-booking-api", *shlex.split(command)],
-              check=True,
-          )
-          EOF
+          docker run -d --name render-api --network host \
+            -e DATABASE_URL=postgresql://booking:booking@127.0.0.1:5432/render_check \
+            -e ENVIRONMENT=production -e CALENDAR_BACKEND=postgres -e RUN_MIGRATIONS=true -e PORT=8090 \
+            -e API_KEY=ci-api-key-0123456789 -e CLIENT_IP_HEADER=CF-Connecting-IP \
+            voice-booking-api
           for i in $(seq 1 30); do
             curl -fsS http://127.0.0.1:8090/health/live && break
             sleep 1

@@ -594,7 +594,7 @@ Everything else comes from `render.yaml`:
 | Region | Frankfurt | Close to Neon's Frankfurt database |
 | Health check path | `/health/live` | Doesn't touch the database, so Neon can sleep |
 | Auto-deploy | **After CI checks pass** | A push to `main` deploys only when GitHub Actions passed |
-| Start command | `alembic upgrade head && exec uvicorn ...` | Migrations at startup (free services have no pre-deploy command) |
+| `RUN_MIGRATIONS` | `true` | The Dockerfile's start command runs `alembic upgrade head` before the app (free services have no pre-deploy command) |
 | `ENVIRONMENT` | `production` | `/docs` off, HTTPS-only cookie, HSTS, refuses unsafe settings |
 | `CALENDAR_BACKEND` | `postgres` | Store everything in Neon |
 | `CLIENT_IP_HEADER` | `CF-Connecting-IP` | The real caller IP for rate limits (Render is behind Cloudflare, which sets it and rejects fakes) |
@@ -1008,9 +1008,11 @@ See the results in the **Actions** tab of your GitHub repository.
   says "the app is running" and never touches the database. Render's health check (every few seconds) and the
   keep-alive ping use it, so Neon's free database can still sleep and save its 100 monthly compute hours.
 - **Migrations at startup on Render's free plan.** Free services have no pre-deploy command, so `render.yaml`
-  starts the app with `alembic upgrade head && exec uvicorn ...`. With nothing to migrate it takes about a
-  second; if a migration fails the app doesn't start and the deploy fails its health check. CI runs exactly this
-  command against an empty database on every push.
+  sets `RUN_MIGRATIONS=true` and the Dockerfile's start command then runs `alembic upgrade head` before the
+  app. With nothing to migrate it takes about a second; if a migration fails the app doesn't start and the
+  deploy fails its health check. CI starts the image the same way against an empty database on every push.
+  The command isn't in `render.yaml` (`dockerCommand`): Render passes that string to the shell with its quotes
+  still on, so `sh -c "a && b"` fails with "not found".
 - **Railway settings in the dashboard, not in a file.** Railway's `railway.json` is deprecated (it stops being read
   on 2026-12-01), and its replacement is applied with the Railway CLI, which needs Node.js. Five dashboard fields
   are simpler; the README lists them exactly, and the Dockerfile and CI hold everything else.

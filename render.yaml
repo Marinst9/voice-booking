@@ -13,11 +13,8 @@ services:
     dockerfilePath: ./Dockerfile
     # Deploy a push to main only after the GitHub Actions workflow (lint, tests, image smoke test) passed.
     autoDeployTrigger: checksPass
-    # Free services have no pre-deploy command, so the migrations run when the app starts.
-    # They're quick when there's nothing to do, and if one fails the app doesn't start, so the deploy
-    # fails its health check and Render keeps the previous version running.
-    # $PORT is set by Render.
-    dockerCommand: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"
+    # No dockerCommand: the Dockerfile's CMD starts the app (on $PORT, set by Render). Render passes a
+    # dockerCommand to the shell with its quotes still on, so `sh -c "a && b"` fails with "not found".
     # /health/live never touches the database, so Render's health checks (every few seconds)
     # don't keep Neon awake and use up its free compute hours.
     healthCheckPath: /health/live
@@ -26,6 +23,11 @@ services:
         value: production
       - key: CALENDAR_BACKEND
         value: postgres
+      # Free services have no pre-deploy command, so the Dockerfile's CMD runs the migrations before the app.
+      # They're quick when there's nothing to do, and if one fails the app doesn't start, so the deploy
+      # fails its health check and Render keeps the previous version running.
+      - key: RUN_MIGRATIONS
+        value: "true"
       # Render sits behind Cloudflare, which always sets this header to the real caller IP
       # (and rejects requests that try to fake it). Used by the rate limits.
       - key: CLIENT_IP_HEADER
